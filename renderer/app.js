@@ -93,14 +93,112 @@
   }
 
   // ---------- Sekmeler ----------
+  // ---------- Giriş / yetki ----------
+  let role = null;   // null: sadece satış · 'user': gün sonu + ayarlar · 'admin': hepsi
+  const TAB_ROLE = { sale: null, report: 'user', settings: 'user', products: 'admin', security: 'admin' };
+  const canSee = t => TAB_ROLE[t] === null || (role === 'admin') || (role === 'user' && TAB_ROLE[t] === 'user');
+
+  async function sha(text) {
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  const hashPass = (salt, pass) => sha(salt + ':' + pass);
+  async function getAuth() {
+    let a = await DB.getMeta('auth', null);
+    if (!a) {
+      const salt = uuid();
+      a = { salt, userHash: await hashPass(salt, '1234'), adminUser: 'admin', adminHash: await hashPass(salt, '1234') };
+      await DB.setMeta('auth', a);
+    }
+    return a;
+  }
+
+  function loginBox(kind) {
+    const admin = kind === 'admin';
+    openModal(`<div class="lk"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#fff" stroke-width="2">${admin
+      ? '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/>' : '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>'}</svg></div>
+      <h2>${admin ? 'Yönetici paneli' : 'Kullanıcı alanı'}</h2>
+      <div class="hint">${admin ? 'Ürünler, gün sonu, ayarlar ve şifreler' : 'Gün sonu ve ayarlar'}</div>
+      ${admin ? '<label>Kullanıcı adı<input id="lgU" autocomplete="off" autofocus></label>' : ''}
+      <label>Şifre<input id="lgP" type="password" autocomplete="off" ${admin ? '' : 'autofocus'}></label>
+      <div class="btns"><button class="ghost" id="lgC">Vazgeç</button><button class="primary" id="lgO">Giriş</button></div>`, m => {
+      m.classList.add('login');
+      modalClose = () => m.classList.remove('login');
+      const go = async () => {
+        const a = await getAuth();
+        const pass = m.querySelector('#lgP').value;
+        const ok = admin
+          ? (m.querySelector('#lgU').value.trim().toLocaleLowerCase('tr-TR') === a.adminUser.toLocaleLowerCase('tr-TR') && await hashPass(a.salt, pass) === a.adminHash)
+          : (await hashPass(a.salt, pass) === a.userHash || await hashPass(a.salt, pass) === a.adminHash);
+        if (!ok) {
+          beep(false); m.classList.remove('shake'); void m.offsetWidth; m.classList.add('shake');
+          m.querySelector('#lgP').value = ''; m.querySelector('#lgP').focus();
+          return toast(admin ? 'Kullanıcı adı veya şifre hatalı' : 'Şifre hatalı', 'err');
+        }
+        role = admin ? 'admin' : 'user';
+        closeModal();
+        showTab(admin ? 'products' : 'report');
+      };
+      m.querySelector('#lgO').onclick = go;
+      m.querySelector('#lgC').onclick = closeModal;
+      m.querySelectorAll('input').forEach(i => i.onkeydown = e => { if (e.key === 'Enter') go(); });
+    });
+  }
+  function lockPanel() { role = null; showTab('sale'); }
+  $('#btnUserArea').onclick = () => loginBox('user');
+  $('#btnAdmin').onclick = () => loginBox('admin');
+  $('#btnExitPanel').onclick = lockPanel;
+
+  function renderHeader() {
+    const inPanel = !!role && currentTab !== 'sale';
+    $('#panelTabs').classList.toggle('hidden', !inPanel);
+    $('#btnUserArea').classList.toggle('hidden', inPanel);
+    $('#btnAdmin').classList.toggle('hidden', inPanel);
+    $('#btnExitPanel').classList.toggle('hidden', !inPanel);
+    $('#panelBadge').textContent = role === 'admin' ? 'Yönetici' : 'Kullanıcı';
+    document.querySelectorAll('#panelTabs button').forEach(b => b.classList.toggle('hidden', !canSee(b.dataset.tab)));
+  }
+
+  $('#btnSecUser').onclick = async () => {
+    if (role !== 'admin') return;
+    const p1 = $('#secUserNew').value, p2 = $('#secUserNew2').value;
+    if (p1.length < 4) return toast('Şifre en az 4 karakter olmalı', 'err');
+    if (p1 !== p2) return toast('Şifreler aynı değil', 'err');
+    const a = await getAuth();
+    a.userHash = await hashPass(a.salt, p1);
+    await DB.setMeta('auth', a);
+    $('#secUserNew').value = $('#secUserNew2').value = '';
+    toast('Kullanıcı şifresi değiştirildi', 'ok');
+  };
+  $('#btnSecAdmin').onclick = async () => {
+    if (role !== 'admin') return;
+    const a = await getAuth();
+    if (await hashPass(a.salt, $('#secAdminCur').value) !== a.adminHash) return toast('Mevcut yönetici şifresi hatalı', 'err');
+    const name = $('#secAdminName').value.trim(), p1 = $('#secAdminNew').value, p2 = $('#secAdminNew2').value;
+    if (!name) return toast('Kullanıcı adı boş olamaz', 'err');
+    if (p1 || p2) {
+      if (p1.length < 4) return toast('Şifre en az 4 karakter olmalı', 'err');
+      if (p1 !== p2) return toast('Şifreler aynı değil', 'err');
+      a.adminHash = await hashPass(a.salt, p1);
+    }
+    a.adminUser = name;
+    await DB.setMeta('auth', a);
+    ['#secAdminCur', '#secAdminNew', '#secAdminNew2'].forEach(x => $(x).value = '');
+    toast('Yönetici bilgileri kaydedildi', 'ok');
+  };
+
   function showTab(t) {
+    if (!canSee(t)) return;
+    if (t === 'sale') role = null;
     currentTab = t;
+    renderHeader();
     document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
     document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.id === 'tab-' + t));
     if (t === 'sale') { renderChips(); renderTiles(); focusScan(); }
     if (t === 'products') { renderProducts(); $('#prodSearch').focus(); }
     if (t === 'report') renderReport();
     if (t === 'settings') renderSettings();
+    if (t === 'security') getAuth().then(a => { $('#secAdminName').value = a.adminUser; });
   }
   function focusScan() { if (currentTab === 'sale' && !modalOpen()) $('#scanInput').focus(); }
 
@@ -927,8 +1025,9 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && modalOpen()) { e.preventDefault(); closeModal(); return; }
     if (modalOpen()) return;
-    const tabs = { F1: 'sale', F2: 'products', F3: 'report', F4: 'settings' };
-    if (tabs[e.key]) { e.preventDefault(); showTab(tabs[e.key]); return; }
+    if (e.key === 'F1') { e.preventDefault(); lockPanel(); return; }
+    const tabs = { F2: 'products', F3: 'report', F4: 'settings', F5: 'security' };
+    if (tabs[e.key]) { e.preventDefault(); if (role) showTab(tabs[e.key]); return; }
     if (currentTab === 'sale') {
       if (e.key === 'F8') { e.preventDefault(); payCash(); }
       if (e.key === 'F9') { e.preventDefault(); payCard(); }
@@ -950,7 +1049,8 @@
       await DB.open();
       await loadAll();
       await loadPopularity();
-      renderChips(); renderCart(); renderLastSale();
+      await getAuth();
+      renderHeader(); renderChips(); renderCart(); renderLastSale();
       Sync.start();
       focusScan();
     } catch (e) {

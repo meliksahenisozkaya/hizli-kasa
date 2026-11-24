@@ -297,3 +297,24 @@ kbd { border-color: rgba(255,255,255,.25); color: inherit; opacity: .6; font-fam
 .toast.warn { border-color: rgba(245, 165, 36, .5); color: #ffe0a6; }
 :root { color-scheme: dark; }
 .grid th.num { text-align: right; }
+
+/* Giriş / paneller */
+.brand { min-width: 0; max-width: 34vw; }
+.brand #brand { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabs { margin-right: 0; align-items: center; }
+.panel-badge { font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: #ffb28f; background: var(--accent-soft);
+  border: 1px solid var(--accent-line); border-radius: 8px; padding: 5px 10px; margin: 0 4px 0 2px; }
+.hdr-btn { display: inline-flex; align-items: center; gap: 7px; background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+  border-radius: 20px; padding: 7px 14px; font-weight: 500; }
+.hdr-btn:hover { color: var(--text); border-color: var(--accent-line); filter: none; }
+.hdr-btn.exit { background: linear-gradient(180deg, var(--accent2), var(--accent)); color: #fff; border-color: transparent; box-shadow: 0 4px 14px rgba(255, 91, 31, .3); }
+.login { width: 380px; }
+.login .lk { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; margin: 0 auto 4px;
+  background: linear-gradient(145deg, #ff8a4c, #ff4d12); box-shadow: 0 8px 22px rgba(255, 91, 31, .35); }
+.login h2 { text-align: center; }
+.login .hint { text-align: center; }
+.login input { font-size: 18px; text-align: center; letter-spacing: 2px; }
+.login .btns button { flex: 1; }
+@keyframes shake { 10%, 90% { transform: translateX(-2px); } 20%, 80% { transform: translateX(4px); } 30%, 50%, 70% { transform: translateX(-6px); } 40%, 60% { transform: translateX(6px); } }
+.shake { animation: shake .4s; }
+#tab-security .settings { max-width: 1000px; }
