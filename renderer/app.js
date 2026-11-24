@@ -592,16 +592,41 @@
   }
 
   // ---------- İçe aktarma (Excel .xls/.xlsx veya CSV) ----------
+  const SAMPLE_ROWS = [
+    ['FİYAT LİSTESİ : PERAKENDE SATIŞ FİYATLARI'],
+    ['Stok Kodu', 'Stok Adı', 'BARKOD', 'KDV %', 'PERAKENDE FİYATI', 'KDV dahil mi?', 'Birimi', 'Gurubu', 'Mevcut'],
+    [1, 'KAV. İÇ FINDIK', '8698985640285', 1, 1100, 'HAYIR', 'KG', 'İÇ FINDIK', 250],
+    [2, 'PİKOLA FINDIK', '8698985640315', 1, 1120, 'HAYIR', 'KG', 'İÇ FINDIK', ''],
+    [3, 'KROKAN', '', 1, 800, 'HAYIR', 'KG', 'KROKAN', ''],
+    [27, 'FINDIK KROKAN 100G', '8698985640520', 1, 85, 'HAYIR', 'ADET', 'MARKET', 120],
+    [174, 'FINDIK EZMESİ 500 G', '8698985641734', 1, 340, 'HAYIR', 'ADET', 'MARKET', '']
+  ];
+
   $('#btnImport').onclick = () => {
     openModal(`<h2>Excel / CSV içe aktar</h2>
-      <div class="hint">Muhasebe programınızın <b>Stok Kartları Listesi</b> Excel çıktısını doğrudan seçebilirsiniz.
-      Program sütunları başlıklarından tanır: <b>Kodu, Ürün Adı, Özel Kod, Gurubu, Birimi, Barkodu, Mevcut</b>
-      (varsa <b>Fiyat</b> ve <b>KDV</b> de okunur).<br><br>
-      Kendi listenizi hazırlıyorsanız başlıkları <b>Barkod ; Ürün adı ; Fiyat ; Stok ; KDV</b> yapmanız yeterli.<br><br>
-      Aynı barkod ya da stok koduna sahip ürünler güncellenir, yeniler eklenir. Yüklemeden önce önizleme gösterilir.</div>
-      <div class="btns"><button class="ghost" id="iC">Vazgeç</button><button class="primary" id="iO">Dosya seç</button></div>`, m => {
+      <div class="hint">Muhasebe programınızın <b>Fiyat Listesi (Perakende Satış Fiyatları)</b> Excel raporunu doğrudan seçebilirsiniz.
+      Sütunlar başlıklarından tanınır:<br>
+      <b>Stok Kodu · Stok Adı · BARKOD · KDV % · PERAKENDE FİYATI · KDV dahil mi?</b><br>
+      İsteğe bağlı: <b>Birimi · Gurubu · Mevcut</b> (stok miktarı). Stok Kartları Listesi raporu da okunur.<br><br>
+      "KDV dahil mi?" <b>HAYIR</b> ise satış fiyatına KDV eklenir (ör. 1.100 + %1 = 1.111 ₺).<br>
+      Aynı stok kodu ya da barkoda sahip ürünler güncellenir, yeniler eklenir. Yüklemeden önce önizleme gösterilir.</div>
+      <div class="btns"><button class="ghost" id="iS">⬇ Örnek Excel indir</button><span class="grow"></span>
+        <button class="ghost" id="iC">Vazgeç</button><button class="primary" id="iO">Dosya seç</button></div>`, m => {
       m.querySelector('#iC').onclick = closeModal;
       m.querySelector('#iO').onclick = () => { closeModal(); $('#importFile').value = ''; $('#importFile').click(); };
+      m.querySelector('#iS').onclick = async () => {
+        try {
+          if (window.kasa && window.kasa.saveExcel) {
+            const r = await window.kasa.saveExcel(SAMPLE_ROWS, 'ornek-urun-listesi.xlsx');
+            if (r && r.saved) toast('Örnek Excel kaydedildi: ' + r.path, 'ok');
+          } else {
+            const csv = SAMPLE_ROWS.slice(1).map(r => r.join(';')).join('\r\n');
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
+            a.download = 'ornek-urun-listesi.csv'; a.click();
+          }
+        } catch (err) { toast('Kaydedilemedi: ' + err.message, 'err'); }
+      };
     });
   };
 
@@ -625,32 +650,47 @@
     catch (err) { return toast('Dosya okunamadı: ' + err.message, 'err'); }
     const items = parsed.items;
     if (!items.length) return toast('Dosyada ürün bulunamadı. Başlık satırında "Ürün Adı" ve "Barkod" ya da "Kodu" olmalı.', 'err');
-    const all = [...products.values()];
-    const findOld = it => (it.barcode && byBarcode.has(it.barcode) && products.get(byBarcode.get(it.barcode)))
-      || (it.code && all.find(p => p.code === it.code)) || null;
+    const byCodeMap = new Map([...products.values()].filter(p => p.code).map(p => [p.code, p]));
+    const findOld = it => (it.code && byCodeMap.get(it.code))
+      || (it.barcode && byBarcode.has(it.barcode) && products.get(byBarcode.get(it.barcode))) || null;
     const newCount = items.filter(it => !findOld(it)).length;
     const hasStock = items.some(it => Number.isFinite(it.stock));
     const hasPrice = items.some(it => Number.isFinite(it.price));
-    const COLS = { code: 'Kod', name: 'Ürün adı', extra: 'Özel kod', group: 'Grup', unit: 'Birim', barcode: 'Barkod', stock: 'Stok', price: 'Fiyat', vat: 'KDV' };
+    const exclVat = items.some(it => it.vatIncl === false && Number.isFinite(it.price));
+    const salePrice = (it, addVat) => !Number.isFinite(it.price) ? NaN
+      : r2(addVat && it.vatIncl === false && it.vat > 0 ? it.price * (1 + it.vat / 100) : it.price);
+    const COLS = { code: 'Stok kodu', name: 'Ürün adı', extra: 'Özel kod', group: 'Grup', unit: 'Birim', barcode: 'Barkod', stock: 'Stok', price: 'Fiyat', vat: 'KDV %', vatIncl: 'KDV dahil mi' };
+    const previewRows = addVat => items.slice(0, 60).map(it => {
+      const old = findOld(it);
+      return `<tr><td>${old ? '<span style="color:var(--muted)">güncelle</span>' : '<span style="color:var(--accent2)">yeni</span>'}</td>
+        <td>${esc(it.code)}</td><td>${esc(it.barcode || '—')}</td><td>${esc(it.name)}</td>
+        <td class="num">${Number.isFinite(it.vat) ? '%' + it.vat : ''}</td>
+        <td class="num">${Number.isFinite(it.price) ? money(it.price) : ''}</td>
+        <td class="num"><b>${Number.isFinite(it.price) ? money(salePrice(it, addVat)) : ''}</b></td>
+        <td class="num">${Number.isFinite(it.stock) ? qtyFmt(it.stock) : ''}</td></tr>`;
+    }).join('');
     openModal(`<h2>İçe aktarma önizlemesi</h2>
       <div><b>${esc(f.name)}</b> — ${items.length} ürün bulundu: <b>${newCount}</b> yeni, <b>${items.length - newCount}</b> güncellenecek${parsed.skipped ? `, ${parsed.skipped} başlık/boş satır atlandı` : ''}.</div>
-      <div class="hint">Tanınan sütunlar: ${parsed.columns.map(c => COLS[c] || c).join(', ')}${hasPrice ? '' : ' — <b style="color:#f87171">dosyada fiyat yok</b>; fiyatı olmayan ürünlerin fiyatı ilk satışta sorulur ya da Düzenle ile girilir.'}</div>
-      <div class="preview"><table class="grid"><thead><tr><th>Kod</th><th>Barkod</th><th>Ürün adı</th><th>Grup</th><th>Birim</th><th class="num">Stok</th><th class="num">Fiyat</th></tr></thead><tbody>
-      ${items.slice(0, 50).map(it => `<tr><td>${esc(it.code)}</td><td>${esc(it.barcode || '—')}</td><td>${esc(it.name)}</td><td>${esc(it.group)}</td><td>${esc(it.unit)}</td>
-        <td class="num">${Number.isFinite(it.stock) ? qtyFmt(it.stock) : ''}</td><td class="num">${Number.isFinite(it.price) ? money(it.price) : ''}</td></tr>`).join('')}
-      </tbody></table></div>
-      ${items.length > 50 ? `<div class="hint">İlk 50 satır gösteriliyor.</div>` : ''}
+      <div class="hint">Tanınan sütunlar: ${parsed.columns.map(c => COLS[c] || c).join(', ')}${hasPrice ? '' : ' — <b style="color:#f87171">dosyada fiyat yok</b>; fiyatı olmayan ürünlerin fiyatı ilk satışta sorulur.'}</div>
+      <div class="preview"><table class="grid"><thead><tr><th></th><th>Kod</th><th>Barkod</th><th>Ürün adı</th><th class="num">KDV</th><th class="num">Liste fiyatı</th><th class="num">Satış fiyatı</th><th class="num">Stok</th></tr></thead>
+      <tbody id="pvBody">${previewRows(true)}</tbody></table></div>
+      ${items.length > 60 ? `<div class="hint">İlk 60 satır gösteriliyor.</div>` : ''}
+      ${exclVat ? `<label class="chk" style="flex-direction:row"><input type="checkbox" id="impVat" checked> Fiyatlar KDV hariç — satış fiyatına KDV'yi ekle</label>` : ''}
       ${hasStock ? `<label class="chk" style="flex-direction:row"><input type="checkbox" id="impStock" checked> Stok miktarlarını dosyadaki değere eşitle</label>` : ''}
       <label class="chk" style="flex-direction:row"><input type="checkbox" id="impKeepName"> Mevcut ürünlerin adını değiştirme</label>
       <div class="btns"><button class="ghost" id="pC">Vazgeç</button><button class="primary" id="pO">${items.length} ürünü içe aktar</button></div>`, m => {
       m.classList.add('wide');
       modalClose = () => m.classList.remove('wide');
+      const vatBox = m.querySelector('#impVat');
+      if (vatBox) vatBox.onchange = () => { m.querySelector('#pvBody').innerHTML = previewRows(vatBox.checked); };
       m.querySelector('#pC').onclick = closeModal;
       m.querySelector('#pO').onclick = async () => {
         const setStock = hasStock && m.querySelector('#impStock').checked;
         const keepName = m.querySelector('#impKeepName').checked;
+        const addVat = !!(vatBox && vatBox.checked);
+        const ready = items.map(it => ({ ...it, price: salePrice(it, addVat) }));
         closeModal();
-        await runImport(items, findOld, setStock, keepName);
+        await runImport(ready, findOld, setStock, keepName);
       };
     });
   });

@@ -28,7 +28,7 @@ const Importer = (() => {
 
   const UNIT_MAP = { kg: 'kg', kilo: 'kg', gr: 'gr', g: 'gr', brm: 'adet', adet: 'adet', ad: 'adet', ade: 'adet', adt: 'adet', tnk: 'teneke', teneke: 'teneke', ltr: 'lt',
     pkt: 'paket', paket: 'paket', koli: 'koli', kl: 'koli', lt: 'lt', litre: 'lt', kavanoz: 'kavanoz', kvn: 'kavanoz' };
-  const unitOf = v => { const n = norm(v); return UNIT_MAP[n] || (n || 'adet'); };
+  const unitOf = v => { const n = norm(v); return n ? (UNIT_MAP[n] || n) : ''; };
 
   // Başlık hücresi → alan
   function fieldOf(h) {
@@ -41,6 +41,7 @@ const Importer = (() => {
     if (n.includes('gurub') || n.includes('grub') || n === 'grup' || n === 'kategori') return 'group';
     if (n.includes('birim') && !n.includes('fiyat')) return 'unit';
     if (n === 'mevcut' || n.includes('mevcut') || n === 'stok' || n === 'miktar' || n === 'stok miktari' || n === 'kalan') return 'stock';
+    if (n.includes('kdv') && n.includes('dahil')) return 'vatIncl';
     if (n.includes('fiyat') || n.includes('satis')) return 'price';
     if (n.includes('kdv')) return 'vat';
     return null;
@@ -84,7 +85,8 @@ const Importer = (() => {
           group: text(get(r, 'group')),
           stock: num(get(r, 'stock')),
           price: num(get(r, 'price')),
-          vat: num(get(r, 'vat'))
+          vat: num(get(r, 'vat')),
+          vatIncl: (() => { const v = norm(get(r, 'vatIncl')); return v ? !/^(hayir|h|no|0|haric)$/.test(v) : null; })()
         });
       }
       return { format: 'liste', columns: Object.keys(m), items, skipped };
@@ -94,7 +96,7 @@ const Importer = (() => {
       const [b, n, p, s, v] = r;
       const name = text(n), price = num(p);
       if (!name || !Number.isFinite(price)) { if (r.some(c => text(c))) skipped++; continue; }
-      items.push({ code: '', barcode: text(b).replace(/\s/g, ''), name, unit: 'adet', group: '', stock: num(s), price, vat: num(v) });
+      items.push({ code: '', barcode: text(b).replace(/\s/g, ''), name, unit: '', group: '', stock: num(s), price, vat: num(v), vatIncl: null });
     }
     return { format: 'basit', columns: ['barcode', 'name', 'price', 'stock', 'vat'], items, skipped };
   }
