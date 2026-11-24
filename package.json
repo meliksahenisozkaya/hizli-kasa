@@ -1,14 +1,14 @@
 {
   "name": "hizli-kasa",
   "productName": "Hizli Kasa",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Barkodlu hızlı satış kasası - çevrimdışı çalışır, buluta senkronize olur",
   "main": "main.js",
   "author": "Sirket",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win --x64 --publish never"
+    "dist": "electron-builder --win --x64 --publish always"
   },
   "devDependencies": {
     "electron": "^33.2.0",
@@ -40,10 +40,20 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "Hızlı Kasa",
-      "deleteAppDataOnUninstall": false
-    }
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "HizliKasa-Setup-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "meliksahenisozkaya",
+        "repo": "hizli-kasa",
+        "releaseType": "release"
+      }
+    ]
   },
   "dependencies": {
-    "xlsx": "0.18.5"
+    "xlsx": "0.18.5",
+    "electron-updater": "^6.3.9"
   }
 }

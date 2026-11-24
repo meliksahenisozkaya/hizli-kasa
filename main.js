@@ -78,5 +78,22 @@ ipcMain.handle('excel:read', async (_e, bytes) => {
 
 ipcMain.handle('app:version', () => app.getVersion());
 
-app.whenReady().then(createWindow);
+// ---- Otomatik güncelleme (GitHub Releases) ----
+function setupAutoUpdate() {
+  if (!app.isPackaged) return;
+  let autoUpdater;
+  try { ({ autoUpdater } = require('electron-updater')); } catch (_) { return; }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;   // tıklanmasa bile program kapanınca kurulur
+  const send = (ch, data) => { if (win && !win.isDestroyed()) win.webContents.send(ch, data); };
+  autoUpdater.on('update-available', i => send('update:status', { state: 'downloading', version: i.version }));
+  autoUpdater.on('update-downloaded', i => send('update:status', { state: 'ready', version: i.version }));
+  autoUpdater.on('error', e => console.error('Güncelleme hatası:', e && e.message));
+  const check = () => autoUpdater.checkForUpdates().catch(() => {});   // internet yoksa sessizce geç
+  setTimeout(check, 5000);
+  setInterval(check, 60 * 60 * 1000);
+  ipcMain.handle('update:install', () => { setImmediate(() => autoUpdater.quitAndInstall(true, true)); });
+}
+
+app.whenReady().then(() => { createWindow(); setupAutoUpdate(); });
 app.on('window-all-closed', () => app.quit());
