@@ -7,7 +7,10 @@ Barkod okut → Nakit (F8) / Kart (F9) → fiş. İnternet yokken de çalışır
 - Kayıtlı olmayan barkod okutulunca anında ürün ekleme ekranı açılır
 - Nakit ödemede para üstü hesabı (hızlı banknot butonları)
 - Stok takibi: satışta stok düşer, mal girişi / sayım / fire, kritik stok uyarısı
-- CSV ile toplu ürün yükleme (Excel'den)
+- Excel (.xls / .xlsx) veya CSV ile toplu ürün yükleme — muhasebe programının "Stok Kartları Listesi" çıktısı doğrudan okunur, önizleme gösterilir
+- Ürün silme (tek tek veya seçerek toplu), buluttan da silinir
+- Fiyatı olmayan ürün okutulunca fiyat sorulur, istenirse ürüne kaydedilir
+- Stok kodu ile satış (barkodsuz ürünler için kodu yazıp Enter)
 - Gün sonu raporu: nakit / kart / toplam, en çok satanlar, satış listesi, yazdırma
 - Yanlış satışı iptal etme (stok geri eklenir)
 - 58 / 80 mm termal yazıcıdan fiş (yazıcı seçilirse soru sormadan basar)
@@ -56,7 +59,7 @@ Verileri Firebase panelinde **Firestore Database → Data** sekmesinden görebil
 
 ## 3) İlk kullanım
 1. Ayarlar → işletme adı, adres, yazıcı, kağıt genişliği → Kaydet → **Test fişi yazdır**.
-2. Ürünler (F2) → **Yeni ürün** veya **CSV içe aktar** (`ornek-urunler.csv` dosyasına bakın).
+2. Ürünler (F2) → **Yeni ürün** veya **Excel / CSV içe aktar** (muhasebe programının stok listesi Excel'i ya da `ornek-urunler.csv` düzeni).
 3. Satış (F1) → barkod okutun.
 
 ## Önemli notlar

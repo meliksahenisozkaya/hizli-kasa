@@ -1,7 +1,7 @@
 {
   "name": "hizli-kasa",
   "productName": "Hizli Kasa",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Barkodlu hızlı satış kasası - çevrimdışı çalışır, buluta senkronize olur",
   "main": "main.js",
   "author": "Sirket",
@@ -17,9 +17,24 @@
   "build": {
     "appId": "com.sirket.hizlikasa",
     "productName": "Hizli Kasa",
-    "files": ["main.js", "preload.js", "renderer/**/*"],
-    "directories": { "output": "dist" },
-    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -27,5 +42,8 @@
       "shortcutName": "Hızlı Kasa",
       "deleteAppDataOnUninstall": false
     }
+  },
+  "dependencies": {
+    "xlsx": "0.18.5"
   }
 }

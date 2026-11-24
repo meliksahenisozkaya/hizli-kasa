@@ -69,6 +69,13 @@ ipcMain.handle('print:html', async (_e, html, opts = {}) => {
   }
 });
 
+ipcMain.handle('excel:read', async (_e, bytes) => {
+  const XLSX = require('xlsx');
+  const wb = XLSX.read(Buffer.from(bytes), { type: 'buffer', cellDates: false });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: false });
+});
+
 ipcMain.handle('app:version', () => app.getVersion());
 
 app.whenReady().then(createWindow);
