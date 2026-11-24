@@ -602,11 +602,10 @@
     const units = [...new Set(['adet', 'kg', 'gr', 'paket', 'kavanoz', 'koli', 'lt', 'teneke', v.unit].filter(Boolean))];
     openModal(`<h2>${isNew ? 'Yeni ürün' : 'Ürünü düzenle'}</h2>
       <div class="img-row"><div class="img-prev" id="fImgPrev">${v.image ? `<img src="${v.image}" alt="">` : '<span>Fotoğraf yok</span>'}</div>
-        <div class="img-acts"><button type="button" class="ghost" id="fImgFile">Bilgisayardan seç</button>
-          <button type="button" class="ghost" id="fImgSite">halisfindik.com'dan bul</button>
+        <div class="img-acts"><button type="button" class="ghost" id="fImgFile">${v.image ? 'Fotoğrafı değiştir' : 'Bilgisayardan fotoğraf seç'}</button>
           <button type="button" class="ghost" id="fImgDel">Kaldır</button><input type="file" id="fImgInput" accept="image/*" hidden></div></div>
       <label>Barkod
-        <div style="display:flex;gap:6px"><input id="fBarcode" style="flex:1" value="${esc(v.barcode)}"><button class="ghost" id="fGen" type="button">Barkod üret</button></div>
+        <input id="fBarcode" value="${esc(v.barcode)}" placeholder="Barkodu okutun veya yazın">
       </label>
       <label>Ürün adı<input id="fName" value="${esc(v.name)}" ${opts.barcode || !isNew ? 'autofocus' : ''}></label>
       <div class="two">
@@ -622,19 +621,16 @@
 
       </div>
       <div class="btns"><button class="ghost" id="fCancel">Vazgeç</button><button class="primary" id="fSave">Kaydet (Enter)</button></div>`, m => {
-      m.querySelector('#fGen').onclick = () => { m.querySelector('#fBarcode').value = ean13Internal(); };
       let image = v.image || null;
       const showImg = () => { m.querySelector('#fImgPrev').innerHTML = image ? `<img src="${image}" alt="">` : '<span>Fotoğraf yok</span>'; };
       m.querySelector('#fImgFile').onclick = () => m.querySelector('#fImgInput').click();
       m.querySelector('#fImgInput').onchange = async e => {
         const f = e.target.files[0]; if (!f) return;
-        const url = URL.createObjectURL(f);
-        try { image = await toThumb(url); showImg(); } catch (_) { toast('Resim okunamadı', 'err'); } finally { URL.revokeObjectURL(url); }
-      };
-      m.querySelector('#fImgSite').onclick = async () => {
-        const u = SiteImages.urlFor(m.querySelector('#fName').value);
-        if (!u) return toast('Bu ürün adı için halisfindik.com fotoğrafı bulunamadı', 'warn');
-        try { image = await fetchThumb(u); showImg(); } catch (e) { toast('İndirilemedi (internet bağlantısını kontrol edin)', 'err'); }
+        try {
+          const url = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(f); });
+          image = await toThumb(url); showImg();
+        } catch (_) { toast('Resim okunamadı', 'err'); }
+        e.target.value = '';
       };
       m.querySelector('#fImgDel').onclick = () => { image = null; showImg(); };
       m.querySelector('#fCancel').onclick = closeModal;
