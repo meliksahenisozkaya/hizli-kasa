@@ -398,3 +398,21 @@ body.mode-admin #navTabs .panel-badge { display: inline-block; }
 .pname i { background: #222227; }
 .modal .two input, .modal .two select { width: 100%; min-width: 0; }
 .modal .two label { min-width: 0; }
+
+.tile .ph { width: 100%; align-self: stretch; }
+/* Aylık rapor / hatırlatma */
+.month-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: 12px; font-size: 14px; }
+.month-banner.warn { background: rgba(245, 165, 36, .1); border: 1px solid rgba(245, 165, 36, .45); color: #ffdca0; }
+.month-banner.lock { background: rgba(239, 68, 68, .12); border: 1px solid rgba(239, 68, 68, .55); color: #ffc2c2; }
+.month-banner.info { background: var(--accent-soft); border: 1px solid var(--accent-line); color: #ffd0b8; }
+.month-banner button { margin-left: auto; padding: 6px 14px; background: linear-gradient(180deg, var(--accent2), var(--accent)); color: #fff; font-weight: 600; }
+.mh { margin: 6px 0 0; font-size: 15px; color: var(--accent2); }
+.mlist { display: flex; flex-direction: column; gap: 8px; }
+.mrow { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: #141417; border: 1px solid var(--line2); }
+.mrow > div:first-child { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.mrow span { color: var(--muted); font-size: 13px; }
+.mrow.late { border-color: rgba(239, 68, 68, .6); } .mrow.late span { color: #ff9a9a; }
+.mrow.off { opacity: .55; }
+.cards.mini { grid-template-columns: repeat(5, 1fr); } .cards.mini .v { font-size: 20px; }
+.two-col { display: grid; grid-template-columns: 3fr 2fr; gap: 10px; }
+.two-col .preview { max-height: 46vh; }

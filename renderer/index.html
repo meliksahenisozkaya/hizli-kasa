@@ -68,6 +68,7 @@
         <input id="scanInput" autocomplete="off" spellcheck="false"
                placeholder="Barkod okutun veya ürün ara  (miktar için: 3*barkod)">
       </div>
+      <div class="month-banner hidden" id="monthBanner"></div>
       <div class="chips" id="groupChips"></div>
       <div class="tiles" id="tiles"></div>
     </section>
@@ -120,8 +121,10 @@
       <label>Tarih <input type="date" id="repDate"></label>
       <button id="repToday" class="ghost">Bugün</button>
       <span class="grow"></span>
+      <button id="repMonthly" class="ghost">📅 Aylık rapor &amp; arşiv</button>
       <button id="repPrint" class="primary">Gün sonu raporunu yazdır</button>
     </div>
+    <div class="month-banner hidden" id="repArchivedNote"></div>
     <div class="cards" id="repCards"></div>
     <div class="rep-cols">
       <div class="panel">

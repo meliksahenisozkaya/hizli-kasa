@@ -90,5 +90,50 @@ const Receipt = (() => {
       <div class="c">Yazıcı çalışıyor ✓</div><br>&nbsp;`);
   }
 
-  return { sale, dayReport, test };
+  // A4 aylık satış raporu
+  function monthA4(d, settings) {
+    const ok = d.sales.filter(s => s.status === 'completed').sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const days = new Map();
+    ok.forEach(s => {
+      const k = new Date(s.created_at).toLocaleDateString('tr-TR');
+      const x = days.get(k) || { cash: 0, card: 0, n: 0 };
+      x[s.payment_type] += s.total; x.n++; days.set(k, x);
+    });
+    const rows = d.sales.slice().sort((a, b) => a.created_at.localeCompare(b.created_at)).map(s => {
+      const t = new Date(s.created_at);
+      const items = s.items.map(i => `${esc(i.name)} × ${qtyFmt(i.qty)}`).join(', ');
+      return `<tr class="${s.status !== 'completed' ? 'x' : ''}"><td>${t.toLocaleDateString('tr-TR')}</td><td>${t.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</td>
+        <td>#${s.sale_no}</td><td>${s.payment_type === 'cash' ? 'Nakit' : 'Kart'}${s.status !== 'completed' ? ' (iptal)' : ''}</td><td class="it">${items}</td><td class="r">${tl(s.total)}</td></tr>`;
+    }).join('');
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      @page { size: A4; margin: 12mm; }
+      body { font: 10.5pt/1.35 "Segoe UI", Arial, sans-serif; color: #111; margin: 0; }
+      h1 { font-size: 17pt; margin: 0; } .sub { color: #555; margin: 2px 0 12px; }
+      .cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 14px; }
+      .card { border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; } .card b { display: block; font-size: 13pt; margin-top: 2px; }
+      .card.main { border-color: #ff5b1f; }
+      h2 { font-size: 12pt; margin: 14px 0 6px; border-bottom: 2px solid #ff5b1f; padding-bottom: 3px; }
+      table { width: 100%; border-collapse: collapse; } th, td { padding: 4px 6px; border-bottom: 1px solid #e5e5e5; text-align: left; vertical-align: top; }
+      th { background: #f5f2ef; font-size: 9pt; text-transform: uppercase; } .r { text-align: right; white-space: nowrap; }
+      td.it { font-size: 9pt; color: #333; } tr.x td { color: #999; text-decoration: line-through; }
+      tfoot td { font-weight: bold; border-top: 2px solid #333; } thead { display: table-header-group; } tr { page-break-inside: avoid; }
+      .foot { margin-top: 14px; color: #777; font-size: 8.5pt; }
+    </style></head><body>
+      <h1>${esc(settings.storeName || 'Hızlı Kasa')} — Aylık Satış Raporu</h1>
+      <div class="sub">${esc(d.label)} · Hazırlanma: ${new Date().toLocaleString('tr-TR')}</div>
+      <div class="cards">
+        <div class="card main">Toplam ciro<b>${tl(d.total)} ₺</b></div><div class="card">Nakit<b>${tl(d.cash)} ₺</b></div>
+        <div class="card">Kredi kartı<b>${tl(d.card)} ₺</b></div><div class="card">Satış adedi<b>${d.count}</b></div>
+        <div class="card">İptal<b>${d.cancelled} · ${tl(d.cancelledTotal)} ₺</b></div></div>
+      <h2>Günlük özet</h2>
+      <table><thead><tr><th>Gün</th><th class="r">Satış</th><th class="r">Nakit</th><th class="r">Kart</th><th class="r">Toplam</th></tr></thead><tbody>
+      ${[...days].map(([k, x]) => `<tr><td>${k}</td><td class="r">${x.n}</td><td class="r">${tl(x.cash)}</td><td class="r">${tl(x.card)}</td><td class="r">${tl(x.cash + x.card)}</td></tr>`).join('')}
+      </tbody><tfoot><tr><td>Toplam</td><td class="r">${d.count}</td><td class="r">${tl(d.cash)}</td><td class="r">${tl(d.card)}</td><td class="r">${tl(d.total)}</td></tr></tfoot></table>
+      <h2>Tüm satışlar</h2>
+      <table><thead><tr><th>Tarih</th><th>Saat</th><th>Fiş</th><th>Ödeme</th><th>Ürünler</th><th class="r">Tutar</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="foot">Bu rapor bilgi amaçlıdır. Hızlı Kasa · ${esc(d.month)}</div>
+    </body></html>`;
+  }
+
+  return { sale, dayReport, monthA4, test };
 })();

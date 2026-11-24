@@ -1,5 +1,6 @@
 // Bulut senkronizasyonu (Google Firebase - Cloud Firestore).
 // Kuyruktaki değişiklikler internet gelince gönderilir. Ücretsiz plan (Spark) süresiz, duraklatma yok.
+const localMonth = iso => { const d = new Date(iso); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
 const Sync = (() => {
   const state = { status: 'kapali', pending: 0, lastSync: null, lastError: '' };
   let running = false;
@@ -174,7 +175,9 @@ const Sync = (() => {
       };
       if (!local || Date.parse(row.updated_at) > Date.parse(local.updated_at)) ops.push({ store: 'products', value: row });
     }
+    const archived = new Set((await DB.all('archives')).map(a => a.month));
     for (const s of sales) {
+      if (archived.has(localMonth(s.created_at))) continue;
       const local = await DB.get('sales', s.id);
       if (!local) ops.push({ store: 'sales', value: { ...s, created_at: new Date(s.created_at).toISOString(), items: s.items || [] } });
       if (Number(s.sale_no) > maxNo) maxNo = Number(s.sale_no);

@@ -229,6 +229,7 @@
   }
 
   function addToCart(p, qty = 1, priceOk = false) {
+    if (lockGuard()) return;
     if (!(qty > 0)) { toast('Geçersiz miktar', 'err'); beep(false); return; }
     if (!priceOk && !(p.price > 0)) { beep(false); return askPrice(p, qty); }
     let line = cart.find(l => l.product_id === p.id);
@@ -302,6 +303,32 @@
     return c.toDataURL('image/webp', 0.82);
   }
   const fetchThumb = async url => toThumb(window.kasa && window.kasa.fetchImage ? await window.kasa.fetchImage(url) : url);
+
+  // Fotoğrafı olmayan ürünlere halisfindik.com fotoğraflarını arka planda otomatik ekler
+  const photoTried = new Set();
+  let photoBusy = false;
+  async function autoPhotos() {
+    if (photoBusy || !navigator.onLine || !(window.kasa && window.kasa.fetchImage)) return;
+    const list = [...products.values()].filter(p => !p.image && !p.noPhoto && !photoTried.has(p.id) && SiteImages.urlFor(p.name));
+    if (!list.length) return;
+    photoBusy = true;
+    const cache = new Map(); const rows = []; let fail = 0; const ts = nowIso();
+    for (const p of list) {
+      photoTried.add(p.id);
+      const u = SiteImages.urlFor(p.name);
+      try { if (!cache.has(u)) cache.set(u, await fetchThumb(u)); rows.push({ ...p, image: cache.get(u), updated_at: ts }); }
+      catch (e) { fail++; console.warn('Fotoğraf indirilemedi', u, e && e.message); }
+    }
+    try {
+      for (let i = 0; i < rows.length; i += 100) {
+        const part = rows.slice(i, i + 100);
+        await DB.write(part.map(value => ({ store: 'products', value })), part.map(row => ({ table: 'products', row })));
+      }
+      rows.forEach(indexProduct);
+      if (rows.length) { renderTiles(); if (currentTab === 'products') renderProducts(); Sync.run(); }
+      if (fail && !rows.length) toast('Ürün fotoğrafları halisfindik.com\'dan indirilemedi', 'warn');
+    } finally { photoBusy = false; }
+  }
 
   function renderChips() {
     const cats = allCategories();
@@ -423,6 +450,7 @@
   const AWAIT = `<div class="await-pill"><span class="dot"></span>Ödeme onayı bekleniyor</div>`;
 
   function payCash() {
+    if (lockGuard()) return;
     if (!cart.length) return toast('Sepet boş', 'warn');
     const total = cartTotal();
     const notes = [...new Set([total, 50, 100, 200, 500, 1000].map(Number))].filter(n => n >= total).slice(0, 8);
@@ -459,6 +487,7 @@
   }
 
   function payCard() {
+    if (lockGuard()) return;
     if (!cart.length) return toast('Sepet boş', 'warn');
     const total = cartTotal();
     openModal(`${AWAIT}<h2>Kart / POS ödemesi</h2>
@@ -608,7 +637,7 @@
           id: p ? p.id : uuid(), barcode: barcode || null, name, price: r2(price),
           code: code || null, group: v.group || null,
           category: m.querySelector('#fCat').value.trim() || Importer.guessCategory(name),
-          image: image || null,
+          image: image || null, noPhoto: !image && !!v.image ? true : (image ? false : !!v.noPhoto),
           stock: r3(stock), vat_rate: Number(m.querySelector('#fVat').value), unit: m.querySelector('#fUnit').value,
           min_stock: r3(min), active: p ? p.active : true, updated_at: ts
         };
@@ -955,10 +984,165 @@
       }
       rows.forEach(indexProduct);
       renderProducts();
+      setTimeout(autoPhotos, 500);
       toast(`${added} yeni ürün eklendi, ${rows.length - added} ürün güncellendi${dupBarcode ? ` (${dupBarcode} çakışan barkod korunarak atlandı)` : ''}`, 'ok');
       Sync.run();
     } catch (err) { toast('İçe aktarma başarısız: ' + err.message, 'err'); }
   }
+
+  // ---------- AYLIK RAPOR, ARŞİV VE HATIRLATMA ----------
+  const ymOf = d => { d = new Date(d); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
+  const ymLabel = ym => { const [y, m] = ym.split('-').map(Number); return new Date(y, m - 1, 1).toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }); };
+  const ymIndex = ym => { const [y, m] = ym.split('-').map(Number); return y * 12 + (m - 1); };
+  const ymDeadline = ym => { const [y, m] = ym.split('-').map(Number); return new Date(y, m - 1 + 4, 0); };   // ay sonu + 3 ay
+  let saleLocked = null;   // kilitliyse geciken ay
+
+  async function monthlyStatus() {
+    const cur = ymOf(new Date());
+    const archived = new Set((await DB.all('archives')).map(a => a.month));
+    const months = new Set((await DB.all('sales')).map(s => ymOf(s.created_at)));
+    const pending = [...months].filter(m => m < cur && !archived.has(m)).sort();
+    const overdue = pending.filter(m => ymIndex(cur) - ymIndex(m) > 3);
+    return { cur, pending, overdue, archived };
+  }
+
+  async function checkMonthly() {
+    const st = await monthlyStatus();
+    saleLocked = st.overdue[0] || null;
+    const b = $('#monthBanner');
+    if (!st.pending.length) { b.classList.add('hidden'); return st; }
+    const first = st.pending[0];
+    b.className = 'month-banner ' + (saleLocked ? 'lock' : 'warn');
+    b.innerHTML = saleLocked
+      ? `<b>Satış kilitli:</b> ${ymLabel(saleLocked)} aylık raporu 3 aydır alınmadı. Satışa devam etmek için raporu alın. <button id="mbGo">Aylık raporu al</button>`
+      : `<b>Hatırlatma:</b> ${st.pending.map(ymLabel).join(', ')} aylık raporu alınmadı. Son gün: <b>${ymDeadline(first).toLocaleDateString('tr-TR')}</b> — bu tarihten sonra satış kilitlenir. <button id="mbGo">Şimdi al</button>`;
+    $('#mbGo').onclick = () => openMonthly();
+    return st;
+  }
+  function lockGuard() {
+    if (!saleLocked) return false;
+    beep(false);
+    openModal(`<h2>Satış kilitli</h2><div><b>${ymLabel(saleLocked)}</b> ayının aylık satış raporu 3 aydır alınmadı.
+      Aylık raporu A4 olarak yazdırıp arşivleyene kadar yeni satış yapılamaz.</div>
+      <div class="btns"><button class="ghost" id="lgCx">Kapat</button><button class="primary" id="lgGo">Aylık raporu al</button></div>`, m => {
+      m.querySelector('#lgCx').onclick = closeModal;
+      m.querySelector('#lgGo').onclick = () => { closeModal(); openMonthly(); };
+    });
+    return true;
+  }
+
+  function monthData(ym, sales) {
+    const ok = sales.filter(s => s.status === 'completed');
+    const sum = arr => r2(arr.reduce((a, s) => a + s.total, 0));
+    return {
+      month: ym, label: ymLabel(ym), sales, count: ok.length, total: sum(ok),
+      cash: sum(ok.filter(s => s.payment_type === 'cash')), card: sum(ok.filter(s => s.payment_type === 'card')),
+      cancelled: sales.length - ok.length, cancelledTotal: sum(sales.filter(s => s.status !== 'completed'))
+    };
+  }
+  async function salesOfMonth(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    return DB.range('sales', 'created_at', new Date(y, m - 1, 1).toISOString(), new Date(y, m, 0, 23, 59, 59, 999).toISOString());
+  }
+  async function gzipB64(obj) {
+    const stream = new Blob([JSON.stringify(obj)]).stream().pipeThrough(new CompressionStream('gzip'));
+    const buf = new Uint8Array(await new Response(stream).arrayBuffer());
+    let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  async function gunzipB64(b64) {
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return JSON.parse(await new Response(stream).text());
+  }
+  async function printA4(html) {
+    if (window.kasa && window.kasa.printHtml) return window.kasa.printHtml(html, { a4: true });
+    const w = window.open('', '_blank'); w.document.write(html); w.document.close(); w.print(); return { success: true };
+  }
+
+  async function archiveMonth(ym) {
+    const sales = await salesOfMonth(ym);
+    if (!sales.length) return toast('Bu ayda satış yok', 'warn');
+    const d = monthData(ym, sales);
+    const r = await printA4(Receipt.monthA4(d, settings));
+    if (!r || !r.success) return toast('Yazdırma tamamlanmadı — arşivleme yapılmadı', 'warn');
+    try {
+      const gz = await gzipB64({ month: ym, created_at: nowIso(), store: settings.storeName, sales });
+      let file = '';
+      if (window.kasa && window.kasa.saveArchive) file = await window.kasa.saveArchive(`satis-arsivi-${ym}.json.gz`, gz);
+      const rec = { month: ym, created_at: nowIso(), count: d.count, total: d.total, cash: d.cash, card: d.card,
+        cancelled: d.cancelled, cancelledTotal: d.cancelledTotal, records: sales.length, size: gz.length, file, gz };
+      // arşivi kaydet ve o ayın tek tek satış kayıtlarını bu bilgisayardan kaldır (bulutta yedek olarak kalır)
+      await DB.write([{ store: 'archives', value: rec }, ...sales.map(x => ({ store: 'sales', del: x.id }))]);
+      toast(`${ymLabel(ym)} arşivlendi (${sales.length} satış${file ? ' · dosya: ' + file : ''})`, 'ok');
+    } catch (e) { toast('Arşivlenemedi: ' + e.message, 'err'); }
+    await checkMonthly();
+    if (currentTab === 'report') renderReport();
+  }
+
+  async function openMonthly() {
+    const st = await monthlyStatus();
+    const arch = (await DB.all('archives')).sort((a, b) => b.month.localeCompare(a.month));
+    openModal(`<h2>Aylık rapor &amp; arşiv</h2>
+      <div class="hint">Biten her ayın tüm satışları A4 olarak yazdırılır; yazdırma tamamlanınca o ayın verileri sıkıştırılıp arşive alınır ve dosya olarak da saklanır
+      (Belgeler › Hizli Kasa Arsiv). Arşivlenen ayları aşağıdan açıp görebilirsiniz. Ay bitmeden rapor alınamaz.</div>
+      <h3 class="mh">Raporu alınacak aylar</h3>
+      <div class="mlist">
+        ${st.pending.map(m => `<div class="mrow ${st.overdue.includes(m) ? 'late' : ''}"><div><b>${ymLabel(m)}</b><span>Son gün: ${ymDeadline(m).toLocaleDateString('tr-TR')}${st.overdue.includes(m) ? ' · GECİKTİ, satış kilitli' : ''}</span></div>
+          <button class="primary" data-arch="${m}">🖨 A4 çıktı al ve arşivle</button></div>`).join('')}
+        <div class="mrow off"><div><b>${ymLabel(st.cur)}</b><span>Ay devam ediyor — ay bitmeden çıktı alınamaz</span></div><button disabled>A4 çıktı al</button></div>
+      </div>
+      <h3 class="mh">Arşiv</h3>
+      <div class="mlist">${arch.length ? arch.map(a => `<div class="mrow"><div><b>${ymLabel(a.month)}</b>
+          <span>${a.count} satış · ${money(a.total)} (Nakit ${money(a.cash)} · Kart ${money(a.card)}) · ${(a.size * 0.75 / 1024).toFixed(1)} KB</span></div>
+          <div class="row-btns"><button class="ghost" data-view="${a.month}">Görüntüle</button><button class="ghost" data-reprint="${a.month}">Tekrar yazdır</button></div></div>`).join('')
+        : '<div class="hint">Henüz arşivlenmiş ay yok.</div>'}</div>
+      <div class="btns"><button class="ghost" id="moC">Kapat</button></div>`, m => {
+      m.classList.add('wide');
+      modalClose = () => m.classList.remove('wide');
+      m.querySelector('#moC').onclick = closeModal;
+      m.querySelectorAll('[data-arch]').forEach(b => b.onclick = async () => {
+        const ym = b.dataset.arch;
+        if (!(await confirmBox('Aylık rapor', `${ymLabel(ym)} satışları A4 olarak yazdırılacak. Yazdırma tamamlanınca bu ayın verileri arşive alınacak ve günlük listeden kalkacak (arşivden görüntülenebilir, bulutta yedeği kalır).`, 'Yazdır ve arşivle'))) return;
+        await archiveMonth(ym); openMonthly();
+      });
+      m.querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewArchive(b.dataset.view));
+      m.querySelectorAll('[data-reprint]').forEach(b => b.onclick = async () => {
+        const a = await DB.get('archives', b.dataset.reprint);
+        const data = await gunzipB64(a.gz);
+        await printA4(Receipt.monthA4(monthData(a.month, data.sales), settings));
+      });
+    });
+  }
+
+  async function viewArchive(ym) {
+    const a = await DB.get('archives', ym); if (!a) return;
+    let data;
+    try { data = await gunzipB64(a.gz); } catch (e) { return toast('Arşiv açılamadı: ' + e.message, 'err'); }
+    const d = monthData(ym, data.sales);
+    const top = new Map();
+    data.sales.filter(s => s.status === 'completed').forEach(s => s.items.forEach(i => {
+      const t = top.get(i.name) || { qty: 0, total: 0 }; t.qty = r3(t.qty + i.qty); t.total = r2(t.total + i.total); top.set(i.name, t);
+    }));
+    const list = data.sales.slice().sort((x, y) => y.created_at.localeCompare(x.created_at));
+    openModal(`<h2>${ymLabel(ym)} — arşiv</h2>
+      <div class="cards mini">${[['Toplam ciro', money(d.total)], ['Nakit', money(d.cash)], ['Kredi kartı', money(d.card)], ['Satış', d.count], ['İptal', d.cancelled]]
+        .map(([l, v]) => `<div class="card-s"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('')}</div>
+      <div class="two-col">
+        <div class="preview"><table class="grid"><thead><tr><th>Tarih</th><th>Fiş</th><th>Ödeme</th><th class="num">Tutar</th></tr></thead><tbody>
+          ${list.map(s => `<tr class="${s.status !== 'completed' ? 'cancel' : ''}"><td>${new Date(s.created_at).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })}</td><td>#${s.sale_no}</td>
+            <td>${s.payment_type === 'cash' ? 'Nakit' : 'Kart'}</td><td class="num">${money(s.total)}</td></tr>`).join('')}</tbody></table></div>
+        <div class="preview"><table class="grid"><thead><tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Tutar</th></tr></thead><tbody>
+          ${[...top].sort((x, y) => y[1].total - x[1].total).map(([n, t]) => `<tr><td>${esc(n)}</td><td class="num">${qtyFmt(t.qty)}</td><td class="num">${money(t.total)}</td></tr>`).join('')}</tbody></table></div>
+      </div>
+      <div class="btns"><button class="ghost" id="vaP">A4 yazdır</button><button class="primary" id="vaC">Kapat</button></div>`, m => {
+      m.classList.add('wide');
+      modalClose = () => m.classList.remove('wide');
+      m.querySelector('#vaC').onclick = closeModal;
+      m.querySelector('#vaP').onclick = () => printA4(Receipt.monthA4(d, settings));
+    });
+  }
+  $('#repMonthly').onclick = openMonthly;
 
   // ---------- GÜN SONU ----------
   const pad = n => String(n).padStart(2, '0');
@@ -994,6 +1178,11 @@
   let repCache = null;
   async function renderReport() {
     const r = repCache = await dayData();
+    const ymSel = $('#repDate').value.slice(0, 7);
+    const arc = await DB.get('archives', ymSel);
+    const note = $('#repArchivedNote');
+    note.className = 'month-banner info' + (arc ? '' : ' hidden');
+    if (arc) { note.innerHTML = `${ymLabel(ymSel)} arşivlendi. Bu ayın satışlarını görmek için <button id="rnGo">Arşivi aç</button>`; $('#rnGo').onclick = () => viewArchive(ymSel); }
     $('#repCards').innerHTML = [
       ['Toplam ciro', money(r.total)], ['Nakit', money(r.cash)], ['Kredi kartı', money(r.card)],
       ['Satış adedi', r.count], ['Ortalama sepet', money(r.count ? r.total / r.count : 0)]
@@ -1202,6 +1391,10 @@
       await getAuth();
       renderChips(); renderCart(); renderLastSale(); goHome();
       Sync.start();
+      checkMonthly();
+      setInterval(checkMonthly, 30 * 60 * 1000);
+      setTimeout(autoPhotos, 1500);
+      window.addEventListener('online', () => setTimeout(autoPhotos, 2000));
       focusScan();
     } catch (e) {
       document.body.innerHTML = `<div style="padding:40px;font-size:18px">Veritabanı açılamadı: ${esc(e.message)}</div>`;

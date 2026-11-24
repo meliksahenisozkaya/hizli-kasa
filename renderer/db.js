@@ -1,6 +1,6 @@
 // Yerel veritabanı (IndexedDB) - internet olmadan tüm veriler burada tutulur
 const DB = (() => {
-  const NAME = 'hizli-kasa', VERSION = 1;
+  const NAME = 'hizli-kasa', VERSION = 2;
   let db = null;
 
   const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -15,14 +15,13 @@ const DB = (() => {
       const r = indexedDB.open(NAME, VERSION);
       r.onupgradeneeded = () => {
         const d = r.result;
-        const p = d.createObjectStore('products', { keyPath: 'id' });
-        p.createIndex('barcode', 'barcode', { unique: false });
-        const s = d.createObjectStore('sales', { keyPath: 'id' });
-        s.createIndex('created_at', 'created_at', { unique: false });
-        const m = d.createObjectStore('stock_moves', { keyPath: 'id' });
-        m.createIndex('product_id', 'product_id', { unique: false });
-        d.createObjectStore('outbox', { keyPath: 'seq', autoIncrement: true });
-        d.createObjectStore('meta', { keyPath: 'key' });
+        const has = n => d.objectStoreNames.contains(n);
+        if (!has('products')) d.createObjectStore('products', { keyPath: 'id' }).createIndex('barcode', 'barcode', { unique: false });
+        if (!has('sales')) d.createObjectStore('sales', { keyPath: 'id' }).createIndex('created_at', 'created_at', { unique: false });
+        if (!has('stock_moves')) d.createObjectStore('stock_moves', { keyPath: 'id' }).createIndex('product_id', 'product_id', { unique: false });
+        if (!has('outbox')) d.createObjectStore('outbox', { keyPath: 'seq', autoIncrement: true });
+        if (!has('meta')) d.createObjectStore('meta', { keyPath: 'key' });
+        if (!has('archives')) d.createObjectStore('archives', { keyPath: 'month' });   // aylık sıkıştırılmış arşivler
       };
       r.onsuccess = () => { db = r.result; res(db); };
       r.onerror = () => rej(r.error);
