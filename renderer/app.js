@@ -871,10 +871,33 @@
       İsteğe bağlı: <b>Birimi · Gurubu</b>. Stok Kartları Listesi raporu da okunur.<br><br>
       "KDV dahil mi?" <b>HAYIR</b> ise satış fiyatına KDV eklenir (ör. 1.100 + %1 = 1.111 ₺).<br>
       Aynı stok kodu ya da barkoda sahip ürünler güncellenir, yeniler eklenir. Yüklemeden önce önizleme gösterilir.</div>
-      <div class="btns"><button class="ghost" id="iS">⬇ Örnek Excel indir</button><span class="grow"></span>
+      <div class="hint"><b>Toplu fiyat değişikliği için:</b> "Güncel ürün listesini indir" ile mevcut ürünlerinizi Excel olarak alın, fiyatları Excel'de değiştirip aynı dosyayı buradan geri yükleyin.
+      Satırlar stok kodu / barkod / ürün ID ile eşleşir, ürünler tekrar eklenmez.</div>
+      <div class="btns"><button class="ghost" id="iS">⬇ Örnek Excel</button><button class="ghost" id="iL">⬇ Güncel ürün listesini indir</button><span class="grow"></span>
         <button class="ghost" id="iC">Vazgeç</button><button class="primary" id="iO">Dosya seç</button></div>`, m => {
       m.querySelector('#iC').onclick = closeModal;
       m.querySelector('#iO').onclick = () => { closeModal(); $('#importFile').value = ''; $('#importFile').click(); };
+      m.querySelector('#iL').onclick = async () => {
+        const list = [...products.values()].sort((a, b) => catOf(a).localeCompare(catOf(b), 'tr') || a.name.localeCompare(b.name, 'tr'));
+        if (!list.length) return toast('Henüz ürün yok', 'warn');
+        const rows = [
+          ['GÜNCEL ÜRÜN LİSTESİ · ' + (settings.storeName || 'Hızlı Kasa') + ' · ' + new Date().toLocaleString('tr-TR')],
+          ['Stok Kodu', 'Stok Adı', 'BARKOD', 'KDV %', 'PERAKENDE FİYATI', 'KDV dahil mi?', 'Birimi', 'Kategori', 'Ürün ID'],
+          ...list.map(p => [p.code || '', p.name, p.barcode || '', Number(p.vat_rate) || 0, Number(p.price) || 0, 'EVET', (p.unit || 'adet').toLocaleUpperCase('tr-TR'), catOf(p), p.id])
+        ];
+        const name = 'urun-listesi-' + new Date().toISOString().slice(0, 10) + '.xlsx';
+        try {
+          if (window.kasa && window.kasa.saveExcel) {
+            const r = await window.kasa.saveExcel(rows, name);
+            if (r && r.saved) toast(`${list.length} ürün Excel'e aktarıldı: ` + r.path, 'ok');
+          } else {
+            const csv = rows.slice(1).map(r => r.map(v => String(v).replace(/;/g, ',')).join(';')).join('\r\n');
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv' }));
+            a.download = name.replace('.xlsx', '.csv'); a.click();
+          }
+        } catch (err) { toast('Kaydedilemedi: ' + err.message, 'err'); }
+      };
       m.querySelector('#iS').onclick = async () => {
         try {
           if (window.kasa && window.kasa.saveExcel) {
@@ -912,7 +935,7 @@
     const items = parsed.items;
     if (!items.length) return toast('Dosyada ürün bulunamadı. Başlık satırında "Ürün Adı" ve "Barkod" ya da "Kodu" olmalı.', 'err');
     const byCodeMap = new Map([...products.values()].filter(p => p.code).map(p => [p.code, p]));
-    const findOld = it => (it.code && byCodeMap.get(it.code))
+    const findOld = it => (it.id && products.get(it.id)) || (it.code && byCodeMap.get(it.code))
       || (it.barcode && byBarcode.has(it.barcode) && products.get(byBarcode.get(it.barcode))) || null;
     const newCount = items.filter(it => !findOld(it)).length;
     const hasStock = false;
@@ -920,7 +943,7 @@
     const exclVat = items.some(it => it.vatIncl === false && Number.isFinite(it.price));
     const salePrice = (it, addVat) => !Number.isFinite(it.price) ? NaN
       : r2(addVat && it.vatIncl === false && it.vat > 0 ? it.price * (1 + it.vat / 100) : it.price);
-    const COLS = { code: 'Stok kodu', name: 'Ürün adı', extra: 'Özel kod', group: 'Grup', unit: 'Birim', barcode: 'Barkod', stock: 'Stok', price: 'Fiyat', vat: 'KDV %', vatIncl: 'KDV dahil mi' };
+    const COLS = { code: 'Stok kodu', name: 'Ürün adı', extra: 'Özel kod', group: 'Grup', unit: 'Birim', barcode: 'Barkod', stock: 'Stok', price: 'Fiyat', vat: 'KDV %', vatIncl: 'KDV dahil mi', category: 'Kategori', id: 'Ürün ID' };
     const previewRows = addVat => items.slice(0, 60).map(it => {
       const old = findOld(it);
       return `<tr><td>${old ? '<span style="color:var(--muted)">güncelle</span>' : '<span style="color:var(--accent2)">yeni</span>'}</td>
@@ -971,13 +994,13 @@
       const row = old ? {
         ...old,
         name: keepName ? old.name : it.name,
-        code: it.code || old.code || null, group: it.group || old.group || null,
+        code: it.code || old.code || null, group: it.group || old.group || null, category: it.category || old.category || null,
         barcode: barcode || old.barcode || null, unit: it.unit || old.unit,
         price: Number.isFinite(it.price) ? r2(it.price) : old.price,
         vat_rate: Number.isFinite(it.vat) ? it.vat : old.vat_rate,
         active: true, updated_at: ts
       } : {
-        id: uuid(), code: it.code || null, barcode, name: it.name, group: it.group || null, category: Importer.guessCategory(it.name),
+        id: uuid(), code: it.code || null, barcode, name: it.name, group: it.group || null, category: it.category || Importer.guessCategory(it.name),
         price: Number.isFinite(it.price) ? r2(it.price) : 0, stock: 0,
         vat_rate: Number.isFinite(it.vat) ? it.vat : 10, unit: it.unit || 'adet', min_stock: 0, active: true, updated_at: ts
       };

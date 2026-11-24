@@ -38,7 +38,9 @@ const Importer = (() => {
     if (n.includes('ozel kod')) return 'extra';
     if (n === 'kodu' || n === 'kod' || n === 'stok kodu' || n === 'urun kodu') return 'code';
     if (n.includes('urun adi') || n.includes('stok adi') || n === 'adi' || n === 'urun' || n === 'aciklama') return 'name';
-    if (n.includes('gurub') || n.includes('grub') || n === 'grup' || n === 'kategori') return 'group';
+    if (n === 'urun id' || n === 'id' || n === 'kayit id') return 'id';
+    if (n.includes('kategori')) return 'category';
+    if (n.includes('gurub') || n.includes('grub') || n === 'grup') return 'group';
     if (n.includes('birim') && !n.includes('fiyat')) return 'unit';
     if (n === 'mevcut' || n.includes('mevcut') || n === 'stok' || n === 'miktar' || n === 'stok miktari' || n === 'kalan') return 'stock';
     if (n.includes('kdv') && n.includes('dahil')) return 'vatIncl';
@@ -79,6 +81,7 @@ const Importer = (() => {
         const barcode = text(get(r, 'barcode')).replace(/\s/g, '');
         const extra = text(get(r, 'extra'));
         items.push({
+          id: text(get(r, 'id')), category: text(get(r, 'category')),
           code, barcode,
           name: extra && !norm(name).includes(norm(extra)) ? `${name} (${extra})` : name,
           unit: unitOf(get(r, 'unit')),
