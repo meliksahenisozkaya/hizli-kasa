@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com;">
+  <title>Hızlı Kasa</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand" id="brand">Hızlı Kasa</div>
+    <nav class="tabs">
+      <button data-tab="sale" class="active">Satış <kbd>F1</kbd></button>
+      <button data-tab="products">Ürünler / Stok <kbd>F2</kbd></button>
+      <button data-tab="report">Gün Sonu <kbd>F3</kbd></button>
+      <button data-tab="settings">Ayarlar <kbd>F4</kbd></button>
+    </nav>
+    <div class="status" id="syncStatus" title="">●</div>
+    <div class="clock" id="clock"></div>
+  </header>
+
+  <!-- SATIŞ -->
+  <main id="tab-sale" class="tab active">
+    <section class="sale-left">
+      <div class="scan">
+        <input id="scanInput" autocomplete="off" spellcheck="false"
+               placeholder="Barkod okutun veya ürün adı yazın  (miktar için: 3*barkod)">
+      </div>
+      <div class="cart-wrap">
+        <table class="cart">
+          <thead><tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Fiyat</th><th class="num">Tutar</th><th></th></tr></thead>
+          <tbody id="cartBody"></tbody>
+        </table>
+        <div class="empty" id="cartEmpty">Sepet boş — barkod okutarak başlayın</div>
+      </div>
+    </section>
+    <aside class="sale-right">
+      <div class="total-box">
+        <div class="lbl">TOPLAM</div>
+        <div class="total" id="cartTotal">0,00 ₺</div>
+        <div class="sub" id="cartCount">0 kalem</div>
+      </div>
+      <button class="pay cash" id="btnCash">NAKİT <kbd>F8</kbd></button>
+      <button class="pay card" id="btnCard">KART / POS <kbd>F9</kbd></button>
+      <button class="ghost" id="btnClear">Sepeti temizle</button>
+      <div class="last-sale" id="lastSale"></div>
+    </aside>
+  </main>
+
+  <!-- ÜRÜNLER -->
+  <main id="tab-products" class="tab">
+    <div class="toolbar">
+      <input id="prodSearch" placeholder="Ürün adı veya barkod ara...">
+      <label class="chk"><input type="checkbox" id="showPassive"> Pasifleri göster</label>
+      <label class="chk"><input type="checkbox" id="onlyLow"> Sadece düşük stok</label>
+      <span class="grow"></span>
+      <button id="btnImport" class="ghost">CSV içe aktar</button>
+      <input type="file" id="importFile" accept=".csv,.txt" hidden>
+      <button id="btnNewProduct" class="primary">+ Yeni ürün</button>
+    </div>
+    <div class="table-wrap">
+      <table class="grid">
+        <thead><tr><th>Barkod</th><th>Ürün adı</th><th class="num">Fiyat</th><th class="num">KDV</th><th class="num">Stok</th><th>Birim</th><th></th></tr></thead>
+        <tbody id="prodBody"></tbody>
+      </table>
+    </div>
+    <div class="foot" id="prodFoot"></div>
+  </main>
+
+  <!-- GÜN SONU -->
+  <main id="tab-report" class="tab">
+    <div class="toolbar">
+      <label>Tarih <input type="date" id="repDate"></label>
+      <button id="repToday" class="ghost">Bugün</button>
+      <span class="grow"></span>
+      <button id="repPrint" class="primary">Gün sonu raporunu yazdır</button>
+    </div>
+    <div class="cards" id="repCards"></div>
+    <div class="rep-cols">
+      <div class="panel">
+        <h3>Satışlar</h3>
+        <div class="table-wrap"><table class="grid">
+          <thead><tr><th>Saat</th><th>Fiş</th><th class="num">Kalem</th><th>Ödeme</th><th class="num">Tutar</th></tr></thead>
+          <tbody id="repSales"></tbody>
+        </table></div>
+      </div>
+      <div class="panel">
+        <h3>En çok satanlar</h3>
+        <div class="table-wrap"><table class="grid">
+          <thead><tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Tutar</th></tr></thead>
+          <tbody id="repTop"></tbody>
+        </table></div>
+        <h3>Düşük stok uyarısı</h3>
+        <div class="table-wrap"><table class="grid">
+          <thead><tr><th>Ürün</th><th class="num">Stok</th><th class="num">Min.</th></tr></thead>
+          <tbody id="repLow"></tbody>
+        </table></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- AYARLAR -->
+  <main id="tab-settings" class="tab">
+    <div class="settings">
+      <div class="panel">
+        <h3>İşletme ve fiş</h3>
+        <label>İşletme adı <input id="setStoreName"></label>
+        <label>Adres <textarea id="setStoreAddress" rows="2"></textarea></label>
+        <label>Telefon <input id="setStorePhone"></label>
+        <label>Fiş alt yazısı <textarea id="setFooter" rows="2" placeholder="Bizi tercih ettiğiniz için teşekkürler"></textarea></label>
+        <label>Yazıcı
+          <select id="setPrinter"><option value="">(Her seferinde sor)</option></select>
+        </label>
+        <label>Kağıt genişliği
+          <select id="setPaper"><option value="80">80 mm</option><option value="58">58 mm</option></select>
+        </label>
+        <label class="chk"><input type="checkbox" id="setAutoPrint"> Satış bitince fişi otomatik yazdır</label>
+        <div class="row-btns">
+          <button id="btnSaveSettings" class="primary">Kaydet</button>
+          <button id="btnTestPrint" class="ghost">Test fişi yazdır</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Bulut senkronizasyonu (Firebase)</h3>
+        <p class="hint">İnternet yokken satışlar bilgisayarda saklanır, bağlantı gelince otomatik gönderilir.</p>
+        <label>Proje ID <input id="sbUrl" placeholder="ornek: sirketim-kasa"></label>
+        <label>Web API anahtarı <input id="sbKey" placeholder="AIza..."></label>
+        <label>Kasa e-postası <input id="sbEmail" type="email"></label>
+        <label>Şifre <input id="sbPass" type="password"></label>
+        <div class="row-btns">
+          <button id="btnLogin" class="primary">Bağlan</button>
+          <button id="btnLogout" class="ghost">Bağlantıyı kes</button>
+        </div>
+        <div id="syncInfo" class="sync-info"></div>
+        <div class="row-btns">
+          <button id="btnSyncNow" class="ghost">Şimdi senkronize et</button>
+          <button id="btnRestore" class="ghost">Buluttan geri yükle</button>
+        </div>
+        <h3>Yedek</h3>
+        <div class="row-btns">
+          <button id="btnBackup" class="ghost">Yedeği dosyaya indir (JSON)</button>
+        </div>
+        <p class="hint" id="appVersion"></p>
+      </div>
+    </div>
+  </main>
+
+  <div id="modalBack" class="modal-back hidden"><div id="modal" class="modal"></div></div>
+  <div id="toasts" class="toasts"></div>
+
+  <script src="db.js"></script>
+  <script src="sync.js"></script>
+  <script src="receipt.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

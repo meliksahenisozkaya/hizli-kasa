@@ -1,0 +1,713 @@
+// Hızlı Kasa - arayüz ve iş mantığı
+(() => {
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const r2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+  const r3 = n => Math.round((Number(n) + Number.EPSILON) * 1000) / 1000;
+  const money = n => Number(n || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+  const qtyFmt = n => Number(n || 0).toLocaleString('tr-TR', { maximumFractionDigits: 3 });
+  const uuid = () => crypto.randomUUID();
+  const nowIso = () => new Date().toISOString();
+  const lower = s => String(s || '').toLocaleLowerCase('tr-TR');
+  function parseNum(v) {
+    let s = String(v ?? '').trim().replace(/\s|₺/g, '');
+    if (s.includes('.') && s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(',', '.');
+    const n = Number(s);
+    return Number.isFinite(n) ? n : NaN;
+  }
+
+  // ---------- Durum ----------
+  const products = new Map();   // id -> ürün
+  const byBarcode = new Map();  // barkod -> id
+  let cart = [];
+  let settings = {};
+  let saleNo = 0;
+  let deviceId = '';
+  let lastSale = null;
+  let currentTab = 'sale';
+
+  const DEFAULT_SETTINGS = { storeName: '', storeAddress: '', storePhone: '', footer: 'Bizi tercih ettiğiniz için teşekkürler', printer: '', paper: '80', autoPrint: true };
+
+  function indexProduct(p) {
+    const old = products.get(p.id);
+    if (old && old.barcode && old.barcode !== p.barcode && byBarcode.get(old.barcode) === p.id) byBarcode.delete(old.barcode);
+    products.set(p.id, p);
+    if (p.barcode) byBarcode.set(p.barcode, p.id);
+  }
+
+  async function loadAll() {
+    products.clear(); byBarcode.clear();
+    (await DB.all('products')).forEach(indexProduct);
+    settings = { ...DEFAULT_SETTINGS, ...(await DB.getMeta('settings', {})) };
+    saleNo = await DB.getMeta('sale_no', 0);
+    deviceId = await DB.getMeta('device_id', '');
+    if (!deviceId) { deviceId = 'KASA-' + uuid().slice(0, 8).toUpperCase(); await DB.setMeta('device_id', deviceId); }
+    $('#brand').textContent = settings.storeName || 'Hızlı Kasa';
+  }
+
+  // ---------- Bildirim & modal ----------
+  function toast(msg, type = '') {
+    const el = document.createElement('div');
+    el.className = 'toast ' + type;
+    el.textContent = msg;
+    $('#toasts').appendChild(el);
+    setTimeout(() => el.remove(), type === 'err' ? 4500 : 2600);
+  }
+  function beep(ok = true) {
+    try {
+      const ctx = beep.ctx || (beep.ctx = new AudioContext());
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = ok ? 1400 : 300; g.gain.value = 0.08;
+      o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + (ok ? 0.07 : 0.25));
+    } catch (_) {}
+  }
+
+  let modalClose = null;
+  function openModal(html, onMount) {
+    $('#modal').innerHTML = html;
+    $('#modalBack').classList.remove('hidden');
+    modalClose = null;
+    if (onMount) onMount($('#modal'));
+    const f = $('#modal [autofocus]') || $('#modal input, #modal select, #modal button');
+    if (f) setTimeout(() => { f.focus(); if (f.select) f.select(); }, 30);
+  }
+  function closeModal() {
+    $('#modalBack').classList.add('hidden');
+    $('#modal').innerHTML = '';
+    const cb = modalClose; modalClose = null;
+    if (cb) cb();
+    focusScan();
+  }
+  const modalOpen = () => !$('#modalBack').classList.contains('hidden');
+  function confirmBox(title, text, okLabel = 'Evet', danger = false) {
+    return new Promise(res => {
+      let answered = false;
+      openModal(`<h2>${esc(title)}</h2><div>${esc(text)}</div>
+        <div class="btns"><button class="ghost" data-a="no">Vazgeç</button><button class="${danger ? 'danger' : 'primary'}" data-a="yes" autofocus>${esc(okLabel)}</button></div>`, m => {
+        m.querySelector('[data-a=no]').onclick = () => { answered = true; closeModal(); res(false); };
+        m.querySelector('[data-a=yes]').onclick = () => { answered = true; closeModal(); res(true); };
+        modalClose = () => { if (!answered) res(false); };
+      });
+    });
+  }
+
+  // ---------- Sekmeler ----------
+  function showTab(t) {
+    currentTab = t;
+    document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+    document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.id === 'tab-' + t));
+    if (t === 'sale') focusScan();
+    if (t === 'products') { renderProducts(); $('#prodSearch').focus(); }
+    if (t === 'report') renderReport();
+    if (t === 'settings') renderSettings();
+  }
+  function focusScan() { if (currentTab === 'sale' && !modalOpen()) $('#scanInput').focus(); }
+
+  // ---------- SATIŞ ----------
+  function addToCart(p, qty = 1) {
+    if (!(qty > 0)) { toast('Geçersiz miktar', 'err'); beep(false); return; }
+    let line = cart.find(l => l.product_id === p.id);
+    if (line) { line.qty = r3(line.qty + qty); cart.splice(cart.indexOf(line), 1); cart.unshift(line); }
+    else { line = { product_id: p.id, barcode: p.barcode, name: p.name, price: p.price, vat_rate: p.vat_rate, unit: p.unit, qty: r3(qty) }; cart.unshift(line); }
+    if (p.stock - line.qty < 0) toast(`Stok yetersiz: ${p.name} (mevcut ${qtyFmt(p.stock)})`, 'warn');
+    beep(true);
+    renderCart(true);
+  }
+  const lineTotal = l => r2(l.price * l.qty);
+  const cartTotal = () => r2(cart.reduce((s, l) => s + lineTotal(l), 0));
+
+  function renderCart(flashFirst = false) {
+    $('#cartBody').innerHTML = cart.map((l, i) => {
+      const p = products.get(l.product_id);
+      const warn = p && p.stock - l.qty < 0 ? `<span class="warn">Stok: ${qtyFmt(p.stock)}</span>` : '';
+      return `<tr class="${i === 0 && flashFirst ? 'flash' : ''}" data-i="${i}">
+        <td>${esc(l.name)}${warn}</td>
+        <td class="num"><span class="qty"><button data-a="dec">−</button><span data-a="edit">${qtyFmt(l.qty)}</span><button data-a="inc">+</button></span></td>
+        <td class="num">${money(l.price)}</td>
+        <td class="num"><b>${money(lineTotal(l))}</b></td>
+        <td class="num"><button class="rm" data-a="rm" title="Kaldır">✕</button></td></tr>`;
+    }).join('');
+    $('#cartEmpty').classList.toggle('hidden', cart.length > 0);
+    $('#cartTotal').textContent = money(cartTotal());
+    $('#cartCount').textContent = `${cart.length} kalem`;
+  }
+
+  $('#cartBody').addEventListener('click', e => {
+    const a = e.target.dataset.a; if (!a) return;
+    const i = Number(e.target.closest('tr').dataset.i);
+    const l = cart[i]; if (!l) return;
+    if (a === 'inc') l.qty = r3(l.qty + 1);
+    if (a === 'dec') { l.qty = r3(l.qty - 1); if (l.qty <= 0) cart.splice(i, 1); }
+    if (a === 'rm') cart.splice(i, 1);
+    if (a === 'edit') return editQty(l);
+    renderCart(); focusScan();
+  });
+
+  function editQty(l) {
+    openModal(`<h2>${esc(l.name)}</h2><label>Miktar (${esc(l.unit)})<input id="mq" value="${String(l.qty).replace('.', ',')}" autofocus></label>
+      <div class="btns"><button class="ghost" id="mc">Vazgeç</button><button class="primary" id="mo">Tamam</button></div>`, m => {
+      const ok = () => {
+        const q = parseNum(m.querySelector('#mq').value);
+        if (!(q >= 0)) return toast('Geçersiz miktar', 'err');
+        if (q === 0) cart.splice(cart.indexOf(l), 1); else l.qty = r3(q);
+        closeModal(); renderCart();
+      };
+      m.querySelector('#mo').onclick = ok;
+      m.querySelector('#mc').onclick = closeModal;
+      m.querySelector('#mq').onkeydown = e => { if (e.key === 'Enter') ok(); };
+    });
+  }
+
+  function handleScan(raw) {
+    let text = raw.trim(); if (!text) return;
+    let qty = 1;
+    const mq = text.match(/^(\d+(?:[.,]\d+)?)\s*[*xX]\s*(.+)$/);
+    if (mq) { qty = parseNum(mq[1]); text = mq[2].trim(); }
+    const id = byBarcode.get(text);
+    if (id) {
+      const p = products.get(id);
+      if (!p.active) { beep(false); return toast(`"${p.name}" pasif durumda. Ürünler ekranından aktif edin.`, 'err'); }
+      return addToCart(p, qty);
+    }
+    const q = lower(text);
+    const found = [...products.values()].filter(p => p.active && (lower(p.name).includes(q) || (p.barcode || '').includes(text)));
+    if (found.length === 1) return addToCart(found[0], qty);
+    if (found.length > 1) return pickProduct(found.slice(0, 50), qty);
+    beep(false);
+    if (/^\d{3,}$/.test(text)) return productForm(null, { barcode: text, afterSave: p => addToCart(p, qty) });
+    toast('Ürün bulunamadı: ' + text, 'err');
+  }
+
+  function pickProduct(list, qty) {
+    let sel = 0;
+    openModal(`<h2>Ürün seçin</h2><div class="pick">${list.map((p, i) =>
+      `<button data-i="${i}" class="${i === 0 ? 'sel' : ''}"><span>${esc(p.name)}</span><span>${money(p.price)}</span></button>`).join('')}</div>
+      <div class="hint">↑ ↓ ile seçip Enter'a basın</div>`, m => {
+      const btns = [...m.querySelectorAll('.pick button')];
+      btns.forEach(b => b.onclick = () => { closeModal(); addToCart(list[Number(b.dataset.i)], qty); });
+      m.onkeydown = e => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + btns.length) % btns.length;
+          btns.forEach((b, i) => b.classList.toggle('sel', i === sel)); btns[sel].focus();
+        }
+      };
+    });
+  }
+
+  $('#scanInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { const v = e.target.value; e.target.value = ''; handleScan(v); }
+    else if (e.key === 'Escape') e.target.value = '';
+    else if (e.key === 'Delete' && !e.target.value && cart.length) { cart.shift(); renderCart(); }
+  });
+  document.addEventListener('click', e => {
+    if (currentTab === 'sale' && !modalOpen() && !e.target.closest('input,button,select,textarea')) focusScan();
+  });
+
+  function payCash() {
+    if (!cart.length) return toast('Sepet boş', 'warn');
+    const total = cartTotal();
+    const notes = [...new Set([total, 50, 100, 200, 500, 1000].map(Number))].filter(n => n >= total || n === total).slice(0, 8);
+    openModal(`<h2>Nakit ödeme</h2><div class="big-total">${money(total)}</div>
+      <label>Alınan para (boş bırakılırsa tam tutar)<input id="cg" inputmode="decimal" autofocus></label>
+      <div class="quick">${notes.map(n => `<button data-v="${n}">${n === total ? 'Tam' : n.toLocaleString('tr-TR')}</button>`).join('')}</div>
+      <div>Para üstü</div><div class="change-v" id="chg">0,00 ₺</div>
+      <div class="btns"><button class="ghost" id="cc">Vazgeç (Esc)</button><button class="primary" id="co">Satışı tamamla (Enter)</button></div>`, m => {
+      const inp = m.querySelector('#cg');
+      const calc = () => {
+        const v = inp.value.trim() === '' ? total : parseNum(inp.value);
+        const c = r2(v - total);
+        const el = m.querySelector('#chg');
+        el.textContent = Number.isFinite(c) ? money(c) : '—';
+        el.classList.toggle('bad', !(c >= 0));
+        return { v, c };
+      };
+      const ok = async () => {
+        const { v, c } = calc();
+        if (!(c >= 0)) { beep(false); return toast('Alınan tutar toplamdan az', 'err'); }
+        closeModal();
+        await completeSale('cash', r2(v), c);
+      };
+      inp.oninput = calc;
+      inp.onkeydown = e => { if (e.key === 'Enter') ok(); };
+      m.querySelectorAll('.quick button').forEach(b => b.onclick = () => { inp.value = String(b.dataset.v).replace('.', ','); calc(); ok(); });
+      m.querySelector('#co').onclick = ok;
+      m.querySelector('#cc').onclick = closeModal;
+    });
+  }
+  async function payCard() {
+    if (!cart.length) return toast('Sepet boş', 'warn');
+    await completeSale('card', null, null);
+  }
+
+  let saving = false;
+  async function completeSale(type, given, change) {
+    if (saving || !cart.length) return;
+    saving = true;
+    try {
+      const ts = nowIso();
+      const no = saleNo + 1;
+      const items = cart.slice().reverse().map(l => ({
+        product_id: l.product_id, barcode: l.barcode, name: l.name, unit: l.unit,
+        qty: l.qty, price: l.price, vat_rate: l.vat_rate, total: lineTotal(l)
+      }));
+      const sale = {
+        id: uuid(), sale_no: no, created_at: ts, items, total: cartTotal(),
+        payment_type: type, cash_given: given, change_amount: change,
+        status: 'completed', cancelled_at: null, device: deviceId
+      };
+      const ops = [{ store: 'sales', value: sale }, { store: 'meta', value: { key: 'sale_no', value: no } }];
+      const sync = [{ table: 'sales', row: sale }];
+      const updated = [];
+      for (const it of items) {
+        const p = products.get(it.product_id); if (!p) continue;
+        const np = { ...p, stock: r3(p.stock - it.qty), updated_at: ts };
+        const mv = { id: uuid(), product_id: p.id, qty: -it.qty, reason: 'Satış #' + no, ref_id: sale.id, created_at: ts };
+        updated.push(np);
+        ops.push({ store: 'products', value: np }, { store: 'stock_moves', value: mv });
+        sync.push({ table: 'products', row: np }, { table: 'stock_moves', row: mv });
+      }
+      await DB.write(ops, sync);
+      saleNo = no;
+      updated.forEach(indexProduct);
+      lastSale = sale;
+      cart = [];
+      renderCart(); renderLastSale();
+      toast(`Satış #${no} kaydedildi — ${money(sale.total)}`, 'ok');
+      if (settings.autoPrint) printSale(sale);
+      Sync.run();
+    } catch (e) {
+      console.error(e);
+      toast('Satış kaydedilemedi: ' + e.message, 'err');
+    } finally { saving = false; focusScan(); }
+  }
+
+  function renderLastSale() {
+    const s = lastSale;
+    if (!s) { $('#lastSale').innerHTML = ''; return; }
+    $('#lastSale').innerHTML = `Son satış <b>#${s.sale_no}</b> · ${s.payment_type === 'cash' ? 'Nakit' : 'Kart'} · <b>${money(s.total)}</b>
+      ${s.payment_type === 'cash' && s.change_amount > 0 ? `<div>Para üstü</div><div class="change">${money(s.change_amount)}</div>` : ''}
+      <div style="margin-top:8px"><button class="ghost" id="reprint">Fişi yazdır</button></div>`;
+    $('#reprint').onclick = () => printSale(s);
+  }
+
+  // ---------- Yazdırma ----------
+  async function printHtml(html) {
+    try {
+      if (window.kasa) {
+        const r = await window.kasa.printHtml(html, { deviceName: settings.printer });
+        if (!r.success && r.reason && r.reason !== 'cancelled') toast('Yazdırılamadı: ' + r.reason, 'err');
+      } else {
+        const w = window.open('', '_blank'); w.document.write(html); w.document.close(); w.print();
+      }
+    } catch (e) { toast('Yazdırma hatası: ' + e.message, 'err'); }
+  }
+  const printSale = s => printHtml(Receipt.sale(s, settings));
+
+  // ---------- ÜRÜNLER ----------
+  function ean13Internal() {
+    // Mağaza içi barkod: 2 ile başlar, 13 hane, kontrol haneli
+    for (;;) {
+      let s = '2' + String(Date.now()).slice(-7) + String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+      s = s.slice(0, 12);
+      const sum = [...s].reduce((a, d, i) => a + Number(d) * (i % 2 ? 3 : 1), 0);
+      const code = s + ((10 - (sum % 10)) % 10);
+      if (!byBarcode.has(code)) return code;
+    }
+  }
+
+  function productForm(p, opts = {}) {
+    const isNew = !p;
+    const v = p || { barcode: opts.barcode || '', name: '', price: '', vat_rate: 10, unit: 'adet', stock: 0, min_stock: 0 };
+    openModal(`<h2>${isNew ? 'Yeni ürün' : 'Ürünü düzenle'}</h2>
+      <label>Barkod
+        <div style="display:flex;gap:6px"><input id="fBarcode" style="flex:1" value="${esc(v.barcode)}"><button class="ghost" id="fGen" type="button">Barkod üret</button></div>
+      </label>
+      <label>Ürün adı<input id="fName" value="${esc(v.name)}" ${opts.barcode || !isNew ? 'autofocus' : ''}></label>
+      <div class="two">
+        <label>Satış fiyatı (KDV dahil ₺)<input id="fPrice" inputmode="decimal" value="${v.price === '' ? '' : String(v.price).replace('.', ',')}"></label>
+        <label>KDV %<select id="fVat">${[0, 1, 10, 20].map(r => `<option ${Number(v.vat_rate) === r ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+      </div>
+      <div class="two">
+        <label>Birim<select id="fUnit">${['adet', 'kg', 'gr', 'paket', 'kavanoz', 'koli', 'lt'].map(u => `<option ${v.unit === u ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
+        <label>Kritik stok seviyesi<input id="fMin" inputmode="decimal" value="${String(v.min_stock).replace('.', ',')}"></label>
+      </div>
+      ${isNew ? `<label>Başlangıç stoğu<input id="fStock" inputmode="decimal" value="0"></label>` : `<div class="hint">Mevcut stok: <b>${qtyFmt(v.stock)}</b> — stok değiştirmek için "Stok" butonunu kullanın.</div>`}
+      <div class="btns"><button class="ghost" id="fCancel">Vazgeç</button><button class="primary" id="fSave">Kaydet (Enter)</button></div>`, m => {
+      m.querySelector('#fGen').onclick = () => { m.querySelector('#fBarcode').value = ean13Internal(); };
+      m.querySelector('#fCancel').onclick = closeModal;
+      const save = async () => {
+        const barcode = m.querySelector('#fBarcode').value.trim();
+        const name = m.querySelector('#fName').value.trim();
+        const price = parseNum(m.querySelector('#fPrice').value);
+        const min = parseNum(m.querySelector('#fMin').value || 0);
+        const stock = isNew ? parseNum(m.querySelector('#fStock').value || 0) : v.stock;
+        if (!name) return toast('Ürün adı gerekli', 'err');
+        if (!(price >= 0)) return toast('Geçerli bir fiyat girin', 'err');
+        if (!Number.isFinite(stock) || !Number.isFinite(min)) return toast('Stok değerlerini kontrol edin', 'err');
+        if (barcode && byBarcode.has(barcode) && byBarcode.get(barcode) !== (p && p.id)) {
+          return toast('Bu barkod başka bir ürüne kayıtlı: ' + products.get(byBarcode.get(barcode)).name, 'err');
+        }
+        const ts = nowIso();
+        const row = {
+          id: p ? p.id : uuid(), barcode: barcode || null, name, price: r2(price),
+          stock: r3(stock), vat_rate: Number(m.querySelector('#fVat').value), unit: m.querySelector('#fUnit').value,
+          min_stock: r3(min), active: p ? p.active : true, updated_at: ts
+        };
+        const ops = [{ store: 'products', value: row }], sync = [{ table: 'products', row }];
+        if (isNew && row.stock !== 0) {
+          const mv = { id: uuid(), product_id: row.id, qty: row.stock, reason: 'Açılış stoğu', ref_id: null, created_at: ts };
+          ops.push({ store: 'stock_moves', value: mv }); sync.push({ table: 'stock_moves', row: mv });
+        }
+        try {
+          await DB.write(ops, sync);
+          indexProduct(row);
+          cart.forEach(l => { if (l.product_id === row.id) Object.assign(l, { name: row.name, price: row.price, vat_rate: row.vat_rate, unit: row.unit, barcode: row.barcode }); });
+          closeModal();
+          toast('Ürün kaydedildi', 'ok');
+          if (currentTab === 'products') renderProducts();
+          renderCart();
+          if (opts.afterSave) opts.afterSave(row);
+          Sync.run();
+        } catch (e) { toast('Kaydedilemedi: ' + e.message, 'err'); }
+      };
+      m.querySelector('#fSave').onclick = save;
+      m.querySelectorAll('input').forEach(i => i.addEventListener('keydown', e => { if (e.key === 'Enter' && i.id !== 'fBarcode') save(); }));
+      m.querySelector('#fBarcode').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); m.querySelector('#fName').focus(); } });
+    });
+  }
+
+  function stockForm(p) {
+    openModal(`<h2>Stok hareketi</h2><div><b>${esc(p.name)}</b><br>Mevcut stok: <b>${qtyFmt(p.stock)} ${esc(p.unit)}</b></div>
+      <label>İşlem<select id="sType"><option value="in">Mal girişi (+)</option><option value="set">Sayım: stoğu şu değere eşitle</option><option value="out">Fire / çıkış (−)</option></select></label>
+      <label>Miktar<input id="sQty" inputmode="decimal" autofocus></label>
+      <label>Açıklama (isteğe bağlı)<input id="sNote"></label>
+      <div class="btns"><button class="ghost" id="sC">Vazgeç</button><button class="primary" id="sO">Kaydet</button></div>`, m => {
+      m.querySelector('#sC').onclick = closeModal;
+      const ok = async () => {
+        const t = m.querySelector('#sType').value;
+        const q = parseNum(m.querySelector('#sQty').value);
+        if (!Number.isFinite(q) || (t !== 'set' && q <= 0)) return toast('Geçerli bir miktar girin', 'err');
+        const delta = r3(t === 'in' ? q : t === 'out' ? -q : q - p.stock);
+        if (delta === 0) { closeModal(); return; }
+        const note = m.querySelector('#sNote').value.trim();
+        const reason = ({ in: 'Mal girişi', out: 'Fire/çıkış', set: 'Sayım düzeltme' })[t] + (note ? ' - ' + note : '');
+        const ts = nowIso();
+        const np = { ...p, stock: r3(p.stock + delta), updated_at: ts };
+        const mv = { id: uuid(), product_id: p.id, qty: delta, reason, ref_id: null, created_at: ts };
+        try {
+          await DB.write([{ store: 'products', value: np }, { store: 'stock_moves', value: mv }],
+            [{ table: 'products', row: np }, { table: 'stock_moves', row: mv }]);
+          indexProduct(np); closeModal(); renderProducts(); toast('Stok güncellendi', 'ok'); Sync.run();
+        } catch (e) { toast('Kaydedilemedi: ' + e.message, 'err'); }
+      };
+      m.querySelector('#sO').onclick = ok;
+      m.querySelector('#sQty').onkeydown = e => { if (e.key === 'Enter') ok(); };
+    });
+  }
+
+  async function toggleActive(p) {
+    const np = { ...p, active: !p.active, updated_at: nowIso() };
+    await DB.write([{ store: 'products', value: np }], [{ table: 'products', row: np }]);
+    indexProduct(np); renderProducts(); Sync.run();
+  }
+
+  const isLow = p => p.active && (p.stock <= 0 || (p.min_stock > 0 && p.stock <= p.min_stock));
+
+  function renderProducts() {
+    const q = lower($('#prodSearch').value.trim());
+    const showPassive = $('#showPassive').checked, onlyLow = $('#onlyLow').checked;
+    let list = [...products.values()]
+      .filter(p => (showPassive || p.active) && (!onlyLow || isLow(p)))
+      .filter(p => !q || lower(p.name).includes(q) || (p.barcode || '').includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+    const total = list.length;
+    list = list.slice(0, 500);
+    $('#prodBody').innerHTML = list.map(p => `<tr class="${p.active ? '' : 'passive'}" data-id="${p.id}">
+      <td>${esc(p.barcode || '—')}</td><td>${esc(p.name)}</td>
+      <td class="num">${money(p.price)}</td><td class="num">%${p.vat_rate}</td>
+      <td class="num ${p.stock < 0 ? 'neg' : isLow(p) ? 'low' : ''}">${qtyFmt(p.stock)}</td><td>${esc(p.unit)}</td>
+      <td><div class="acts"><button data-a="stock">Stok</button><button data-a="edit">Düzenle</button>
+        <button data-a="toggle" class="ghost">${p.active ? 'Pasif yap' : 'Aktif yap'}</button></div></td></tr>`).join('');
+    const lowCount = [...products.values()].filter(isLow).length;
+    $('#prodFoot').textContent = `${total} ürün listelendi${total > 500 ? ' (ilk 500 gösteriliyor, aramayı daraltın)' : ''} · Toplam ${products.size} ürün · Düşük stokta ${lowCount} ürün`;
+  }
+  $('#prodBody').addEventListener('click', e => {
+    const a = e.target.dataset.a; if (!a) return;
+    const p = products.get(e.target.closest('tr').dataset.id);
+    if (a === 'edit') productForm(p);
+    if (a === 'stock') stockForm(p);
+    if (a === 'toggle') toggleActive(p);
+  });
+  ['#prodSearch', '#showPassive', '#onlyLow'].forEach(s => $(s).addEventListener('input', renderProducts));
+  $('#btnNewProduct').onclick = () => productForm(null);
+
+  // CSV içe aktarma: barkod;ürün adı;fiyat;stok;kdv
+  $('#btnImport').onclick = () => {
+    openModal(`<h2>CSV içe aktar</h2>
+      <div class="hint">Excel'de şu sütun sırasıyla hazırlayıp "CSV (noktalı virgülle ayrılmış)" olarak kaydedin:<br>
+      <b>Barkod ; Ürün adı ; Fiyat ; Stok ; KDV</b> (Stok ve KDV isteğe bağlı)<br><br>
+      Barkodu zaten kayıtlı ürünlerin adı ve fiyatı güncellenir; stok sütunu doluysa stok o değere eşitlenir.</div>
+      <div class="btns"><button class="ghost" id="iC">Vazgeç</button><button class="primary" id="iO">Dosya seç</button></div>`, m => {
+      m.querySelector('#iC').onclick = closeModal;
+      m.querySelector('#iO').onclick = () => { closeModal(); $('#importFile').value = ''; $('#importFile').click(); };
+    });
+  };
+  $('#importFile').addEventListener('change', async e => {
+    const f = e.target.files[0]; if (!f) return;
+    let text = await f.text();
+    if (text.includes('�')) {      // UTF-8 değilse Windows-1254 (Türkçe) dene
+      text = new TextDecoder('windows-1254').decode(await f.arrayBuffer());
+    }
+    const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
+    if (!lines.length) return toast('Dosya boş', 'err');
+    const d = [';', '\t', ','].find(c => lines[0].includes(c)) || ';';
+    const ts = nowIso();
+    const ops = [], sync = [], touched = [];
+    let added = 0, updated = 0, skipped = 0;
+    const seen = new Map();
+    for (const line of lines) {
+      const c = line.split(d).map(x => x.trim().replace(/^"|"$/g, ''));
+      const [barcode, name, priceS, stockS, vatS] = c;
+      const price = parseNum(priceS);
+      if (!name || !Number.isFinite(price)) { skipped++; continue; }   // başlık satırı veya hatalı satır
+      const stock = stockS ? parseNum(stockS) : NaN;
+      const vat = vatS ? parseNum(vatS) : NaN;
+      const existingId = barcode ? (seen.get(barcode) || byBarcode.get(barcode)) : null;
+      const old = existingId ? (touched.find(t => t.id === existingId) || products.get(existingId)) : null;
+      const row = old
+        ? { ...old, name, price: r2(price), vat_rate: Number.isFinite(vat) ? vat : old.vat_rate, active: true, updated_at: ts }
+        : { id: uuid(), barcode: barcode || null, name, price: r2(price), stock: 0, vat_rate: Number.isFinite(vat) ? vat : 10, unit: 'adet', min_stock: 0, active: true, updated_at: ts };
+      if (Number.isFinite(stock) && stock !== row.stock) {
+        const mv = { id: uuid(), product_id: row.id, qty: r3(stock - row.stock), reason: 'CSV içe aktarma', ref_id: null, created_at: ts };
+        row.stock = r3(stock);
+        ops.push({ store: 'stock_moves', value: mv }); sync.push({ table: 'stock_moves', row: mv });
+      }
+      old ? updated++ : added++;
+      if (barcode) seen.set(barcode, row.id);
+      const ti = touched.findIndex(t => t.id === row.id);
+      if (ti >= 0) touched[ti] = row; else touched.push(row);
+    }
+    touched.forEach(row => { ops.push({ store: 'products', value: row }); sync.push({ table: 'products', row }); });
+    try {
+      await DB.write(ops, sync);
+      touched.forEach(indexProduct);
+      renderProducts();
+      toast(`${added} yeni ürün eklendi, ${updated} ürün güncellendi${skipped ? `, ${skipped} satır atlandı` : ''}`, 'ok');
+      Sync.run();
+    } catch (err) { toast('İçe aktarma başarısız: ' + err.message, 'err'); }
+  });
+
+  // ---------- GÜN SONU ----------
+  const pad = n => String(n).padStart(2, '0');
+  const localDate = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  $('#repDate').value = localDate(new Date());
+  $('#repDate').addEventListener('change', renderReport);
+  $('#repToday').onclick = () => { $('#repDate').value = localDate(new Date()); renderReport(); };
+
+  async function dayData() {
+    const [y, m, d] = $('#repDate').value.split('-').map(Number);
+    const start = new Date(y, m - 1, d, 0, 0, 0, 0), end = new Date(y, m - 1, d, 23, 59, 59, 999);
+    const sales = (await DB.range('sales', 'created_at', start.toISOString(), end.toISOString()))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const ok = sales.filter(s => s.status === 'completed');
+    const sum = arr => r2(arr.reduce((a, s) => a + s.total, 0));
+    const topMap = new Map();
+    ok.forEach(s => s.items.forEach(i => {
+      const k = i.product_id || i.name;
+      const t = topMap.get(k) || { name: i.name, qty: 0, total: 0 };
+      t.qty = r3(t.qty + i.qty); t.total = r2(t.total + i.total); topMap.set(k, t);
+    }));
+    const tm = iso => new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    return {
+      sales, dateLabel: start.toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+      count: ok.length, total: sum(ok),
+      cash: sum(ok.filter(s => s.payment_type === 'cash')), card: sum(ok.filter(s => s.payment_type === 'card')),
+      cancelled: sales.length - ok.length, cancelledTotal: sum(sales.filter(s => s.status !== 'completed')),
+      firstSale: ok.length ? tm(ok[ok.length - 1].created_at) : '', lastSale: ok.length ? tm(ok[0].created_at) : '',
+      top: [...topMap.values()].sort((a, b) => b.total - a.total)
+    };
+  }
+
+  let repCache = null;
+  async function renderReport() {
+    const r = repCache = await dayData();
+    $('#repCards').innerHTML = [
+      ['Toplam ciro', money(r.total)], ['Nakit', money(r.cash)], ['Kredi kartı', money(r.card)],
+      ['Satış adedi', r.count], ['Ortalama sepet', money(r.count ? r.total / r.count : 0)]
+    ].map(([l, v]) => `<div class="card-s"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+    $('#repSales').innerHTML = r.sales.map(s => `<tr class="click ${s.status !== 'completed' ? 'cancel' : ''}" data-id="${s.id}">
+      <td>${new Date(s.created_at).toLocaleTimeString('tr-TR')}</td><td>#${s.sale_no}</td><td class="num">${s.items.length}</td>
+      <td>${s.payment_type === 'cash' ? 'Nakit' : 'Kart'}${s.status !== 'completed' ? ' (iptal)' : ''}</td><td class="num">${money(s.total)}</td></tr>`).join('')
+      || '<tr><td colspan="5" style="color:var(--muted)">Bu tarihte satış yok</td></tr>';
+    $('#repTop').innerHTML = r.top.slice(0, 30).map(t => `<tr><td>${esc(t.name)}</td><td class="num">${qtyFmt(t.qty)}</td><td class="num">${money(t.total)}</td></tr>`).join('');
+    $('#repLow').innerHTML = [...products.values()].filter(isLow).sort((a, b) => a.stock - b.stock).slice(0, 50)
+      .map(p => `<tr><td>${esc(p.name)}</td><td class="num ${p.stock < 0 ? 'neg' : 'low'}">${qtyFmt(p.stock)}</td><td class="num">${qtyFmt(p.min_stock)}</td></tr>`).join('')
+      || '<tr><td colspan="3" style="color:var(--muted)">Düşük stoklu ürün yok</td></tr>';
+  }
+  $('#repSales').addEventListener('click', e => {
+    const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+    const s = repCache.sales.find(x => x.id === tr.dataset.id); if (s) saleDetail(s);
+  });
+  $('#repPrint').onclick = async () => printHtml(Receipt.dayReport(await dayData(), settings));
+
+  function saleDetail(s) {
+    openModal(`<h2>Satış #${s.sale_no} ${s.status !== 'completed' ? '(İPTAL)' : ''}</h2>
+      <div class="hint">${new Date(s.created_at).toLocaleString('tr-TR')} · ${s.payment_type === 'cash' ? 'Nakit' : 'Kart'}</div>
+      <table class="grid items"><tbody>${s.items.map(i => `<tr><td>${esc(i.name)}</td><td class="num">${qtyFmt(i.qty)} x ${money(i.price)}</td><td class="num">${money(i.total)}</td></tr>`).join('')}</tbody></table>
+      <div class="big-total">${money(s.total)}</div>
+      <div class="btns">${s.status === 'completed' ? '<button class="danger" id="dCancel">Satışı iptal et</button>' : ''}<span class="grow"></span>
+        <button class="ghost" id="dPrint">Fiş yazdır</button><button class="primary" id="dClose">Kapat</button></div>`, m => {
+      m.querySelector('#dClose').onclick = closeModal;
+      m.querySelector('#dPrint').onclick = () => printSale(s);
+      const c = m.querySelector('#dCancel');
+      if (c) c.onclick = async () => {
+        if (!(await confirmBox('Satış iptali', `#${s.sale_no} numaralı ${money(s.total)} tutarlı satış iptal edilecek ve ürünler stoğa geri eklenecek.`, 'İptal et', true))) return;
+        await cancelSale(s);
+      };
+    });
+  }
+
+  async function cancelSale(s) {
+    const ts = nowIso();
+    const ns = { ...s, status: 'cancelled', cancelled_at: ts };
+    const ops = [{ store: 'sales', value: ns }], sync = [{ table: 'sales', row: ns }], upd = [];
+    for (const it of s.items) {
+      const p = products.get(it.product_id); if (!p) continue;
+      const base = upd.find(u => u.id === p.id) || p;
+      const np = { ...base, stock: r3(base.stock + it.qty), updated_at: ts };
+      const mv = { id: uuid(), product_id: p.id, qty: it.qty, reason: 'İptal #' + s.sale_no, ref_id: s.id, created_at: ts };
+      const ui = upd.findIndex(u => u.id === np.id); if (ui >= 0) upd[ui] = np; else upd.push(np);
+      ops.push({ store: 'stock_moves', value: mv }); sync.push({ table: 'stock_moves', row: mv });
+    }
+    upd.forEach(np => { ops.push({ store: 'products', value: np }); sync.push({ table: 'products', row: np }); });
+    try {
+      await DB.write(ops, sync);
+      upd.forEach(indexProduct);
+      if (lastSale && lastSale.id === s.id) { lastSale = ns; renderLastSale(); }
+      toast(`Satış #${s.sale_no} iptal edildi`, 'ok');
+      renderReport(); Sync.run();
+    } catch (e) { toast('İptal edilemedi: ' + e.message, 'err'); }
+  }
+
+  // ---------- AYARLAR ----------
+  async function renderSettings() {
+    $('#setStoreName').value = settings.storeName;
+    $('#setStoreAddress').value = settings.storeAddress;
+    $('#setStorePhone').value = settings.storePhone;
+    $('#setFooter').value = settings.footer;
+    $('#setPaper').value = settings.paper;
+    $('#setAutoPrint').checked = !!settings.autoPrint;
+    const sel = $('#setPrinter');
+    try {
+      const list = window.kasa ? await window.kasa.listPrinters() : [];
+      sel.innerHTML = '<option value="">(Her seferinde sor)</option>' +
+        list.map(p => `<option value="${esc(p.name)}">${esc(p.displayName)}${p.isDefault ? ' (varsayılan)' : ''}</option>`).join('');
+      if (settings.printer && !list.some(p => p.name === settings.printer)) sel.innerHTML += `<option value="${esc(settings.printer)}">${esc(settings.printer)} (bulunamadı)</option>`;
+    } catch (_) {}
+    sel.value = settings.printer;
+    const c = await Sync.cfg();
+    $('#sbUrl').value = c.url; $('#sbKey').value = c.key;
+    $('#sbEmail').value = (c.session && c.session.email) || '';
+    if (window.kasa) $('#appVersion').textContent = 'Sürüm ' + (await window.kasa.version()) + ' · Cihaz: ' + deviceId;
+  }
+  async function saveSettings() {
+    settings = {
+      storeName: $('#setStoreName').value.trim(), storeAddress: $('#setStoreAddress').value.trim(),
+      storePhone: $('#setStorePhone').value.trim(), footer: $('#setFooter').value.trim(),
+      printer: $('#setPrinter').value, paper: $('#setPaper').value, autoPrint: $('#setAutoPrint').checked
+    };
+    await DB.setMeta('settings', settings);
+    $('#brand').textContent = settings.storeName || 'Hızlı Kasa';
+  }
+  $('#btnSaveSettings').onclick = async () => { await saveSettings(); toast('Ayarlar kaydedildi', 'ok'); };
+  $('#btnTestPrint').onclick = async () => { await saveSettings(); printHtml(Receipt.test(settings)); };
+
+  $('#btnLogin').onclick = async () => {
+    const url = $('#sbUrl').value, key = $('#sbKey').value, email = $('#sbEmail').value, pass = $('#sbPass').value;
+    if (!url || !key || !email || !pass) return toast('Tüm bulut alanlarını doldurun', 'err');
+    try {
+      $('#btnLogin').disabled = true;
+      await Sync.login(url, key, email, pass);
+      $('#sbPass').value = '';
+      toast('Buluta bağlanıldı', 'ok');
+    } catch (e) { toast(e instanceof TypeError ? 'Sunucuya ulaşılamadı. İnterneti ve Proje ID\'yi kontrol edin.' : 'Bağlanılamadı: ' + e.message, 'err'); }
+    finally { $('#btnLogin').disabled = false; }
+  };
+  $('#btnLogout').onclick = async () => {
+    if (await confirmBox('Bağlantıyı kes', 'Senkronizasyon durur. Veriler bilgisayarda kalmaya devam eder.')) { await Sync.logout(); toast('Bağlantı kesildi'); }
+  };
+  $('#btnSyncNow').onclick = () => Sync.run();
+  $('#btnRestore').onclick = async () => {
+    if (!(await confirmBox('Buluttan geri yükle', 'Buluttaki ürünler ve satışlar bu bilgisayara indirilecek. Yerelde daha yeni olan kayıtlar korunur.', 'Geri yükle'))) return;
+    try {
+      toast('İndiriliyor...');
+      const r = await Sync.restore();
+      await loadAll();
+      renderSettings();
+      toast(`${r.products} ürün ve ${r.sales} satış buluttan alındı`, 'ok');
+    } catch (e) { toast('Geri yükleme başarısız: ' + e.message, 'err'); }
+  };
+  $('#btnBackup').onclick = async () => {
+    const data = {
+      created_at: nowIso(), device: deviceId,
+      products: await DB.all('products'), sales: await DB.all('sales'), stock_moves: await DB.all('stock_moves'), settings
+    };
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+    a.download = `kasa-yedek-${localDate(new Date())}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  };
+
+  // ---------- Senkron göstergesi ----------
+  Sync.onChange(s => {
+    const el = $('#syncStatus');
+    const map = {
+      kapali: ['dis', '● Bulut kapalı'], cevrimdisi: ['off', '● Çevrimdışı'],
+      gonderiliyor: ['off', '● Gönderiliyor...'], tamam: ['ok', '● Senkronize'], hata: ['err', '● Senkron hatası']
+    };
+    const [cls, label] = map[s.status] || map.kapali;
+    el.className = 'status ' + cls;
+    el.textContent = label + (s.pending ? ` (${s.pending} bekliyor)` : '');
+    el.title = s.lastError || (s.lastSync ? 'Son senkron: ' + s.lastSync.toLocaleTimeString('tr-TR') : '');
+    const info = $('#syncInfo');
+    if (info) info.textContent = `Durum: ${label.replace('● ', '')}\nGönderilmeyi bekleyen kayıt: ${s.pending}` +
+      (s.lastSync ? `\nSon senkron: ${s.lastSync.toLocaleString('tr-TR')}` : '') + (s.lastError ? `\nHata: ${s.lastError}` : '');
+  });
+
+  // ---------- Klavye kısayolları ----------
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modalOpen()) { e.preventDefault(); closeModal(); return; }
+    if (modalOpen()) return;
+    const tabs = { F1: 'sale', F2: 'products', F3: 'report', F4: 'settings' };
+    if (tabs[e.key]) { e.preventDefault(); showTab(tabs[e.key]); return; }
+    if (currentTab === 'sale') {
+      if (e.key === 'F8') { e.preventDefault(); payCash(); }
+      if (e.key === 'F9') { e.preventDefault(); payCard(); }
+    }
+  });
+  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  $('#btnCash').onclick = payCash;
+  $('#btnCard').onclick = payCard;
+  $('#btnClear').onclick = async () => {
+    if (cart.length && await confirmBox('Sepeti temizle', 'Sepetteki tüm ürünler silinsin mi?', 'Temizle', true)) { cart = []; renderCart(); }
+  };
+  $('#modalBack').addEventListener('mousedown', e => { if (e.target.id === 'modalBack') closeModal(); });
+
+  setInterval(() => { $('#clock').textContent = new Date().toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'medium' }); }, 1000);
+
+  // ---------- Başlat ----------
+  (async () => {
+    try {
+      await DB.open();
+      await loadAll();
+      renderCart(); renderLastSale();
+      Sync.start();
+      focusScan();
+    } catch (e) {
+      document.body.innerHTML = `<div style="padding:40px;font-size:18px">Veritabanı açılamadı: ${esc(e.message)}</div>`;
+    }
+  })();
+})();
