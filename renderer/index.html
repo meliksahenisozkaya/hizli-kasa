@@ -54,14 +54,16 @@
       <input id="prodSearch" placeholder="Ürün adı veya barkod ara...">
       <label class="chk"><input type="checkbox" id="showPassive"> Pasifleri göster</label>
       <label class="chk"><input type="checkbox" id="onlyLow"> Sadece düşük stok</label>
+      <label class="chk"><input type="checkbox" id="onlyNoPrice"> Sadece fiyatsız</label>
       <span class="grow"></span>
-      <button id="btnImport" class="ghost">CSV içe aktar</button>
-      <input type="file" id="importFile" accept=".csv,.txt" hidden>
+      <button id="btnDeleteSel" class="danger hidden">Seçilenleri sil</button>
+      <button id="btnImport" class="ghost">Excel / CSV içe aktar</button>
+      <input type="file" id="importFile" accept=".xls,.xlsx,.csv,.txt" hidden>
       <button id="btnNewProduct" class="primary">+ Yeni ürün</button>
     </div>
     <div class="table-wrap">
       <table class="grid">
-        <thead><tr><th>Barkod</th><th>Ürün adı</th><th class="num">Fiyat</th><th class="num">KDV</th><th class="num">Stok</th><th>Birim</th><th></th></tr></thead>
+        <thead><tr><th class="cb"><input type="checkbox" id="selAll" title="Listelenenlerin tümünü seç"></th><th>Kod</th><th>Barkod</th><th>Ürün adı</th><th>Grup</th><th class="num">Fiyat</th><th class="num">KDV</th><th class="num">Stok</th><th>Birim</th><th></th></tr></thead>
         <tbody id="prodBody"></tbody>
       </table>
     </div>
@@ -152,6 +154,7 @@
   <script src="db.js"></script>
   <script src="sync.js"></script>
   <script src="receipt.js"></script>
+  <script src="importer.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

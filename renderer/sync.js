@@ -132,8 +132,10 @@ const Sync = (() => {
       if (!batch.length) break;
       // Aynı kaydın yalnızca son hali gönderilir
       const latest = new Map();
-      for (const item of batch) latest.set(item.table + '/' + item.row.id, item.row);
-      const writes = [...latest].map(([path, row]) => ({ update: { name: prefix + path, fields: encFields(row) } }));
+      for (const item of batch) latest.set(item.table + '/' + item.row.id, item);
+      const writes = [...latest].map(([path, item]) => item.op === 'delete'
+        ? { delete: prefix + path }
+        : { update: { name: prefix + path, fields: encFields(item.row) } });
       await api('POST', ':commit', { writes });   // tek seferde, ya hepsi ya hiçbiri
       await DB.outboxDelete(batch.map(b => b.seq));
       state.pending = await DB.count('outbox');

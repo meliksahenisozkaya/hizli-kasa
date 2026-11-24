@@ -49,17 +49,17 @@ const DB = (() => {
   }
 
   /**
-   * Atomik yazma. ops: [{store, value}] put edilir.
-   * sync: [{table, row}] buluta gönderilmek üzere kuyruğa eklenir (aynı işlemde).
+   * Atomik yazma. ops: [{store, value}] kaydedilir, [{store, del: anahtar}] silinir.
+   * sync: [{table, row, op?}] buluta gönderilmek üzere kuyruğa eklenir (aynı işlemde). op: 'upsert' | 'delete'
    */
   async function write(ops = [], sync = []) {
     const stores = new Set(ops.map(o => o.store));
     if (sync.length) stores.add('outbox');
     if (!stores.size) return;
     const tx = db.transaction([...stores], 'readwrite');
-    ops.forEach(o => tx.objectStore(o.store).put(o.value));
+    ops.forEach(o => (o.del !== undefined ? tx.objectStore(o.store).delete(o.del) : tx.objectStore(o.store).put(o.value)));
     const now = new Date().toISOString();
-    sync.forEach(s => tx.objectStore('outbox').add({ table: s.table, row: s.row, created_at: now }));
+    sync.forEach(s => tx.objectStore('outbox').add({ table: s.table, row: s.row, op: s.op || 'upsert', created_at: now }));
     return done(tx);
   }
 

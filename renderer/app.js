@@ -105,8 +105,32 @@
   function focusScan() { if (currentTab === 'sale' && !modalOpen()) $('#scanInput').focus(); }
 
   // ---------- SATIŞ ----------
-  function addToCart(p, qty = 1) {
+  function askPrice(p, qty) {
+    openModal(`<h2>Fiyat girin</h2><div><b>${esc(p.name)}</b> ürününün satış fiyatı kayıtlı değil.</div>
+      <label>Birim fiyatı (KDV dahil ₺ / ${esc(p.unit)})<input id="apP" inputmode="decimal" autofocus></label>
+      <label class="chk" style="flex-direction:row"><input type="checkbox" id="apSave" checked> Bu fiyatı ürüne kaydet</label>
+      <div class="btns"><button class="ghost" id="apC">Vazgeç</button><button class="primary" id="apO">Sepete ekle</button></div>`, m => {
+      const ok = async () => {
+        const price = r2(parseNum(m.querySelector('#apP').value));
+        if (!(price > 0)) return toast('Geçerli bir fiyat girin', 'err');
+        let np = { ...p, price };
+        if (m.querySelector('#apSave').checked) {
+          np.updated_at = nowIso();
+          try { await DB.write([{ store: 'products', value: np }], [{ table: 'products', row: np }]); indexProduct(np); Sync.run(); }
+          catch (e) { return toast('Kaydedilemedi: ' + e.message, 'err'); }
+        }
+        closeModal();
+        addToCart(np, qty, true);
+      };
+      m.querySelector('#apO').onclick = ok;
+      m.querySelector('#apC').onclick = closeModal;
+      m.querySelector('#apP').onkeydown = e => { if (e.key === 'Enter') ok(); };
+    });
+  }
+
+  function addToCart(p, qty = 1, priceOk = false) {
     if (!(qty > 0)) { toast('Geçersiz miktar', 'err'); beep(false); return; }
+    if (!priceOk && !(p.price > 0)) { beep(false); return askPrice(p, qty); }
     let line = cart.find(l => l.product_id === p.id);
     if (line) { line.qty = r3(line.qty + qty); cart.splice(cart.indexOf(line), 1); cart.unshift(line); }
     else { line = { product_id: p.id, barcode: p.barcode, name: p.name, price: p.price, vat_rate: p.vat_rate, unit: p.unit, qty: r3(qty) }; cart.unshift(line); }
@@ -170,6 +194,8 @@
       if (!p.active) { beep(false); return toast(`"${p.name}" pasif durumda. Ürünler ekranından aktif edin.`, 'err'); }
       return addToCart(p, qty);
     }
+    const byCode = [...products.values()].find(p => p.active && p.code && p.code === text);
+    if (byCode) return addToCart(byCode, qty);
     const q = lower(text);
     const found = [...products.values()].filter(p => p.active && (lower(p.name).includes(q) || (p.barcode || '').includes(text)));
     if (found.length === 1) return addToCart(found[0], qty);
@@ -319,18 +345,23 @@
 
   function productForm(p, opts = {}) {
     const isNew = !p;
-    const v = p || { barcode: opts.barcode || '', name: '', price: '', vat_rate: 10, unit: 'adet', stock: 0, min_stock: 0 };
+    const v = p || { barcode: opts.barcode || '', name: '', price: '', vat_rate: 10, unit: 'adet', stock: 0, min_stock: 0, code: '', group: '' };
+    const units = [...new Set(['adet', 'kg', 'gr', 'paket', 'kavanoz', 'koli', 'lt', 'teneke', v.unit].filter(Boolean))];
     openModal(`<h2>${isNew ? 'Yeni ürün' : 'Ürünü düzenle'}</h2>
       <label>Barkod
         <div style="display:flex;gap:6px"><input id="fBarcode" style="flex:1" value="${esc(v.barcode)}"><button class="ghost" id="fGen" type="button">Barkod üret</button></div>
       </label>
       <label>Ürün adı<input id="fName" value="${esc(v.name)}" ${opts.barcode || !isNew ? 'autofocus' : ''}></label>
       <div class="two">
+        <label>Stok kodu (isteğe bağlı)<input id="fCode" value="${esc(v.code || '')}"></label>
+        <label>Grup (isteğe bağlı)<input id="fGroup" value="${esc(v.group || '')}"></label>
+      </div>
+      <div class="two">
         <label>Satış fiyatı (KDV dahil ₺)<input id="fPrice" inputmode="decimal" value="${v.price === '' ? '' : String(v.price).replace('.', ',')}"></label>
         <label>KDV %<select id="fVat">${[0, 1, 10, 20].map(r => `<option ${Number(v.vat_rate) === r ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
       </div>
       <div class="two">
-        <label>Birim<select id="fUnit">${['adet', 'kg', 'gr', 'paket', 'kavanoz', 'koli', 'lt'].map(u => `<option ${v.unit === u ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
+        <label>Birim<select id="fUnit">${units.map(u => `<option ${v.unit === u ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
         <label>Kritik stok seviyesi<input id="fMin" inputmode="decimal" value="${String(v.min_stock).replace('.', ',')}"></label>
       </div>
       ${isNew ? `<label>Başlangıç stoğu<input id="fStock" inputmode="decimal" value="0"></label>` : `<div class="hint">Mevcut stok: <b>${qtyFmt(v.stock)}</b> — stok değiştirmek için "Stok" butonunu kullanın.</div>`}
@@ -350,8 +381,12 @@
           return toast('Bu barkod başka bir ürüne kayıtlı: ' + products.get(byBarcode.get(barcode)).name, 'err');
         }
         const ts = nowIso();
+        const code = m.querySelector('#fCode').value.trim();
+        if (code && [...products.values()].some(x => x.code === code && x.id !== (p && p.id))) return toast('Bu stok kodu başka bir üründe kullanılıyor', 'err');
         const row = {
+          ...(p || {}),
           id: p ? p.id : uuid(), barcode: barcode || null, name, price: r2(price),
+          code: code || null, group: m.querySelector('#fGroup').value.trim() || null,
           stock: r3(stock), vat_rate: Number(m.querySelector('#fVat').value), unit: m.querySelector('#fUnit').value,
           min_stock: r3(min), active: p ? p.active : true, updated_at: ts
         };
@@ -415,89 +450,186 @@
 
   const isLow = p => p.active && (p.stock <= 0 || (p.min_stock > 0 && p.stock <= p.min_stock));
 
+  const selected = new Set();
+  let listed = [];
+
   function renderProducts() {
     const q = lower($('#prodSearch').value.trim());
-    const showPassive = $('#showPassive').checked, onlyLow = $('#onlyLow').checked;
-    let list = [...products.values()]
-      .filter(p => (showPassive || p.active) && (!onlyLow || isLow(p)))
-      .filter(p => !q || lower(p.name).includes(q) || (p.barcode || '').includes(q))
+    const showPassive = $('#showPassive').checked, onlyLow = $('#onlyLow').checked, onlyNoPrice = $('#onlyNoPrice').checked;
+    listed = [...products.values()]
+      .filter(p => (showPassive || p.active) && (!onlyLow || isLow(p)) && (!onlyNoPrice || !(p.price > 0)))
+      .filter(p => !q || lower(p.name).includes(q) || (p.barcode || '').includes(q) || lower(p.code).includes(q) || lower(p.group).includes(q))
       .sort((a, b) => a.name.localeCompare(b.name, 'tr'));
-    const total = list.length;
-    list = list.slice(0, 500);
-    $('#prodBody').innerHTML = list.map(p => `<tr class="${p.active ? '' : 'passive'}" data-id="${p.id}">
-      <td>${esc(p.barcode || '—')}</td><td>${esc(p.name)}</td>
-      <td class="num">${money(p.price)}</td><td class="num">%${p.vat_rate}</td>
+    for (const id of [...selected]) if (!products.has(id)) selected.delete(id);
+    const shown = listed.slice(0, 500);
+    $('#prodBody').innerHTML = shown.map(p => `<tr class="${p.active ? '' : 'passive'} ${selected.has(p.id) ? 'sel' : ''}" data-id="${p.id}">
+      <td class="cb"><input type="checkbox" data-a="sel" ${selected.has(p.id) ? 'checked' : ''}></td>
+      <td>${esc(p.code || '')}</td><td>${esc(p.barcode || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.group || '')}</td>
+      <td class="num ${p.price > 0 ? '' : 'noprice'}">${p.price > 0 ? money(p.price) : 'Fiyat yok'}</td><td class="num">%${p.vat_rate}</td>
       <td class="num ${p.stock < 0 ? 'neg' : isLow(p) ? 'low' : ''}">${qtyFmt(p.stock)}</td><td>${esc(p.unit)}</td>
       <td><div class="acts"><button data-a="stock">Stok</button><button data-a="edit">Düzenle</button>
-        <button data-a="toggle" class="ghost">${p.active ? 'Pasif yap' : 'Aktif yap'}</button></div></td></tr>`).join('');
-    const lowCount = [...products.values()].filter(isLow).length;
-    $('#prodFoot').textContent = `${total} ürün listelendi${total > 500 ? ' (ilk 500 gösteriliyor, aramayı daraltın)' : ''} · Toplam ${products.size} ürün · Düşük stokta ${lowCount} ürün`;
+        <button data-a="toggle" class="ghost">${p.active ? 'Pasif yap' : 'Aktif yap'}</button>
+        <button data-a="del" class="ghost" title="Sil" style="color:#f87171">Sil</button></div></td></tr>`).join('');
+    const all = [...products.values()];
+    const lowCount = all.filter(isLow).length, noPrice = all.filter(p => p.active && !(p.price > 0)).length;
+    $('#prodFoot').textContent = `${listed.length} ürün listelendi${listed.length > 500 ? ' (ilk 500 gösteriliyor, aramayı daraltın)' : ''} · Toplam ${products.size} ürün · Düşük stokta ${lowCount} · Fiyatsız ${noPrice}`;
+    $('#selAll').checked = listed.length > 0 && listed.every(p => selected.has(p.id));
+    $('#btnDeleteSel').classList.toggle('hidden', selected.size === 0);
+    $('#btnDeleteSel').textContent = `Seçilenleri sil (${selected.size})`;
   }
   $('#prodBody').addEventListener('click', e => {
     const a = e.target.dataset.a; if (!a) return;
-    const p = products.get(e.target.closest('tr').dataset.id);
+    const p = products.get(e.target.closest('tr').dataset.id); if (!p) return;
+    if (a === 'sel') { e.target.checked ? selected.add(p.id) : selected.delete(p.id); return renderProducts(); }
     if (a === 'edit') productForm(p);
     if (a === 'stock') stockForm(p);
     if (a === 'toggle') toggleActive(p);
+    if (a === 'del') deleteProducts([p.id]);
   });
-  ['#prodSearch', '#showPassive', '#onlyLow'].forEach(s => $(s).addEventListener('input', renderProducts));
+  $('#selAll').addEventListener('change', e => {
+    listed.forEach(p => e.target.checked ? selected.add(p.id) : selected.delete(p.id));
+    renderProducts();
+  });
+  $('#btnDeleteSel').onclick = () => deleteProducts([...selected]);
+  ['#prodSearch', '#showPassive', '#onlyLow', '#onlyNoPrice'].forEach(s => $(s).addEventListener('input', renderProducts));
   $('#btnNewProduct').onclick = () => productForm(null);
 
-  // CSV içe aktarma: barkod;ürün adı;fiyat;stok;kdv
+  async function deleteProducts(ids) {
+    ids = ids.filter(id => products.has(id));
+    if (!ids.length) return;
+    const label = ids.length === 1 ? `"${products.get(ids[0]).name}" ürünü` : `${ids.length} ürün`;
+    if (!(await confirmBox('Ürün silme', `${label} bu bilgisayardan ve buluttan kalıcı olarak silinecek. Geçmiş satış kayıtları etkilenmez.`, 'Sil', true))) return;
+    try {
+      for (let i = 0; i < ids.length; i += 400) {
+        const part = ids.slice(i, i + 400);
+        await DB.write(part.map(id => ({ store: 'products', del: id })),
+          part.map(id => ({ table: 'products', row: { id }, op: 'delete' })));
+      }
+      ids.forEach(id => {
+        const p = products.get(id);
+        if (p && p.barcode && byBarcode.get(p.barcode) === id) byBarcode.delete(p.barcode);
+        products.delete(id); selected.delete(id);
+      });
+      cart = cart.filter(l => products.has(l.product_id));
+      renderCart(); renderProducts();
+      toast(`${ids.length} ürün silindi`, 'ok');
+      Sync.run();
+    } catch (e) { toast('Silinemedi: ' + e.message, 'err'); }
+  }
+
+  // ---------- İçe aktarma (Excel .xls/.xlsx veya CSV) ----------
   $('#btnImport').onclick = () => {
-    openModal(`<h2>CSV içe aktar</h2>
-      <div class="hint">Excel'de şu sütun sırasıyla hazırlayıp "CSV (noktalı virgülle ayrılmış)" olarak kaydedin:<br>
-      <b>Barkod ; Ürün adı ; Fiyat ; Stok ; KDV</b> (Stok ve KDV isteğe bağlı)<br><br>
-      Barkodu zaten kayıtlı ürünlerin adı ve fiyatı güncellenir; stok sütunu doluysa stok o değere eşitlenir.</div>
+    openModal(`<h2>Excel / CSV içe aktar</h2>
+      <div class="hint">Muhasebe programınızın <b>Stok Kartları Listesi</b> Excel çıktısını doğrudan seçebilirsiniz.
+      Program sütunları başlıklarından tanır: <b>Kodu, Ürün Adı, Özel Kod, Gurubu, Birimi, Barkodu, Mevcut</b>
+      (varsa <b>Fiyat</b> ve <b>KDV</b> de okunur).<br><br>
+      Kendi listenizi hazırlıyorsanız başlıkları <b>Barkod ; Ürün adı ; Fiyat ; Stok ; KDV</b> yapmanız yeterli.<br><br>
+      Aynı barkod ya da stok koduna sahip ürünler güncellenir, yeniler eklenir. Yüklemeden önce önizleme gösterilir.</div>
       <div class="btns"><button class="ghost" id="iC">Vazgeç</button><button class="primary" id="iO">Dosya seç</button></div>`, m => {
       m.querySelector('#iC').onclick = closeModal;
       m.querySelector('#iO').onclick = () => { closeModal(); $('#importFile').value = ''; $('#importFile').click(); };
     });
   };
+
+  async function fileRows(f) {
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    const buf = new Uint8Array(await f.arrayBuffer());
+    if (ext === 'xls' || ext === 'xlsx' || (buf[0] === 0xD0 && buf[1] === 0xCF) || (buf[0] === 0x50 && buf[1] === 0x4B)) {
+      if (!window.kasa || !window.kasa.readExcel) throw new Error('Excel okuma bu sürümde kullanılamıyor');
+      return window.kasa.readExcel(buf);
+    }
+    if (buf.slice(0, 2000).includes(0)) throw new Error('Dosya metin (CSV) değil. Excel dosyasını .xls/.xlsx uzantısıyla seçin.');
+    let text = new TextDecoder('utf-8').decode(buf);
+    if (text.includes('�')) text = new TextDecoder('windows-1254').decode(buf);
+    return Importer.csvRows(text);
+  }
+
   $('#importFile').addEventListener('change', async e => {
     const f = e.target.files[0]; if (!f) return;
-    let text = await f.text();
-    if (text.includes('�')) {      // UTF-8 değilse Windows-1254 (Türkçe) dene
-      text = new TextDecoder('windows-1254').decode(await f.arrayBuffer());
-    }
-    const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter(l => l.trim());
-    if (!lines.length) return toast('Dosya boş', 'err');
-    const d = [';', '\t', ','].find(c => lines[0].includes(c)) || ';';
+    let parsed;
+    try { parsed = Importer.parse(await fileRows(f)); }
+    catch (err) { return toast('Dosya okunamadı: ' + err.message, 'err'); }
+    const items = parsed.items;
+    if (!items.length) return toast('Dosyada ürün bulunamadı. Başlık satırında "Ürün Adı" ve "Barkod" ya da "Kodu" olmalı.', 'err');
+    const all = [...products.values()];
+    const findOld = it => (it.barcode && byBarcode.has(it.barcode) && products.get(byBarcode.get(it.barcode)))
+      || (it.code && all.find(p => p.code === it.code)) || null;
+    const newCount = items.filter(it => !findOld(it)).length;
+    const hasStock = items.some(it => Number.isFinite(it.stock));
+    const hasPrice = items.some(it => Number.isFinite(it.price));
+    const COLS = { code: 'Kod', name: 'Ürün adı', extra: 'Özel kod', group: 'Grup', unit: 'Birim', barcode: 'Barkod', stock: 'Stok', price: 'Fiyat', vat: 'KDV' };
+    openModal(`<h2>İçe aktarma önizlemesi</h2>
+      <div><b>${esc(f.name)}</b> — ${items.length} ürün bulundu: <b>${newCount}</b> yeni, <b>${items.length - newCount}</b> güncellenecek${parsed.skipped ? `, ${parsed.skipped} başlık/boş satır atlandı` : ''}.</div>
+      <div class="hint">Tanınan sütunlar: ${parsed.columns.map(c => COLS[c] || c).join(', ')}${hasPrice ? '' : ' — <b style="color:#f87171">dosyada fiyat yok</b>; fiyatı olmayan ürünlerin fiyatı ilk satışta sorulur ya da Düzenle ile girilir.'}</div>
+      <div class="preview"><table class="grid"><thead><tr><th>Kod</th><th>Barkod</th><th>Ürün adı</th><th>Grup</th><th>Birim</th><th class="num">Stok</th><th class="num">Fiyat</th></tr></thead><tbody>
+      ${items.slice(0, 50).map(it => `<tr><td>${esc(it.code)}</td><td>${esc(it.barcode || '—')}</td><td>${esc(it.name)}</td><td>${esc(it.group)}</td><td>${esc(it.unit)}</td>
+        <td class="num">${Number.isFinite(it.stock) ? qtyFmt(it.stock) : ''}</td><td class="num">${Number.isFinite(it.price) ? money(it.price) : ''}</td></tr>`).join('')}
+      </tbody></table></div>
+      ${items.length > 50 ? `<div class="hint">İlk 50 satır gösteriliyor.</div>` : ''}
+      ${hasStock ? `<label class="chk" style="flex-direction:row"><input type="checkbox" id="impStock" checked> Stok miktarlarını dosyadaki değere eşitle</label>` : ''}
+      <label class="chk" style="flex-direction:row"><input type="checkbox" id="impKeepName"> Mevcut ürünlerin adını değiştirme</label>
+      <div class="btns"><button class="ghost" id="pC">Vazgeç</button><button class="primary" id="pO">${items.length} ürünü içe aktar</button></div>`, m => {
+      m.classList.add('wide');
+      modalClose = () => m.classList.remove('wide');
+      m.querySelector('#pC').onclick = closeModal;
+      m.querySelector('#pO').onclick = async () => {
+        const setStock = hasStock && m.querySelector('#impStock').checked;
+        const keepName = m.querySelector('#impKeepName').checked;
+        closeModal();
+        await runImport(items, findOld, setStock, keepName);
+      };
+    });
+  });
+
+  async function runImport(items, findOld, setStock, keepName) {
     const ts = nowIso();
-    const ops = [], sync = [], touched = [];
-    let added = 0, updated = 0, skipped = 0;
-    const seen = new Map();
-    for (const line of lines) {
-      const c = line.split(d).map(x => x.trim().replace(/^"|"$/g, ''));
-      const [barcode, name, priceS, stockS, vatS] = c;
-      const price = parseNum(priceS);
-      if (!name || !Number.isFinite(price)) { skipped++; continue; }   // başlık satırı veya hatalı satır
-      const stock = stockS ? parseNum(stockS) : NaN;
-      const vat = vatS ? parseNum(vatS) : NaN;
-      const existingId = barcode ? (seen.get(barcode) || byBarcode.get(barcode)) : null;
-      const old = existingId ? (touched.find(t => t.id === existingId) || products.get(existingId)) : null;
-      const row = old
-        ? { ...old, name, price: r2(price), vat_rate: Number.isFinite(vat) ? vat : old.vat_rate, active: true, updated_at: ts }
-        : { id: uuid(), barcode: barcode || null, name, price: r2(price), stock: 0, vat_rate: Number.isFinite(vat) ? vat : 10, unit: 'adet', min_stock: 0, active: true, updated_at: ts };
-      if (Number.isFinite(stock) && stock !== row.stock) {
-        const mv = { id: uuid(), product_id: row.id, qty: r3(stock - row.stock), reason: 'CSV içe aktarma', ref_id: null, created_at: ts };
-        row.stock = r3(stock);
-        ops.push({ store: 'stock_moves', value: mv }); sync.push({ table: 'stock_moves', row: mv });
+    const touched = new Map();
+    const moves = [];
+    let added = 0, dupBarcode = 0;
+    const seenBarcode = new Map();
+    for (const it of items) {
+      let old = findOld(it);
+      if (old && touched.has(old.id)) old = touched.get(old.id);
+      if (!old && it.barcode && seenBarcode.has(it.barcode)) old = touched.get(seenBarcode.get(it.barcode));
+      let barcode = it.barcode || null;
+      if (barcode && byBarcode.has(barcode) && old && byBarcode.get(barcode) !== old.id) { barcode = old.barcode; dupBarcode++; }
+      const row = old ? {
+        ...old,
+        name: keepName ? old.name : it.name,
+        code: it.code || old.code || null, group: it.group || old.group || null,
+        barcode: barcode || old.barcode || null, unit: it.unit || old.unit,
+        price: Number.isFinite(it.price) ? r2(it.price) : old.price,
+        vat_rate: Number.isFinite(it.vat) ? it.vat : old.vat_rate,
+        active: true, updated_at: ts
+      } : {
+        id: uuid(), code: it.code || null, barcode, name: it.name, group: it.group || null,
+        price: Number.isFinite(it.price) ? r2(it.price) : 0, stock: 0,
+        vat_rate: Number.isFinite(it.vat) ? it.vat : 10, unit: it.unit || 'adet', min_stock: 0, active: true, updated_at: ts
+      };
+      if (!old) added++;
+      if (setStock && Number.isFinite(it.stock) && r3(it.stock) !== r3(row.stock)) {
+        moves.push({ id: uuid(), product_id: row.id, qty: r3(it.stock - row.stock), reason: 'Excel içe aktarma', ref_id: null, created_at: ts });
+        row.stock = r3(it.stock);
       }
-      old ? updated++ : added++;
-      if (barcode) seen.set(barcode, row.id);
-      const ti = touched.findIndex(t => t.id === row.id);
-      if (ti >= 0) touched[ti] = row; else touched.push(row);
+      touched.set(row.id, row);
+      if (row.barcode) seenBarcode.set(row.barcode, row.id);
     }
-    touched.forEach(row => { ops.push({ store: 'products', value: row }); sync.push({ table: 'products', row }); });
+    const rows = [...touched.values()];
     try {
-      await DB.write(ops, sync);
-      touched.forEach(indexProduct);
+      for (let i = 0; i < rows.length; i += 300) {
+        const part = rows.slice(i, i + 300);
+        await DB.write(part.map(value => ({ store: 'products', value })), part.map(row => ({ table: 'products', row })));
+      }
+      for (let i = 0; i < moves.length; i += 300) {
+        const part = moves.slice(i, i + 300);
+        await DB.write(part.map(value => ({ store: 'stock_moves', value })), part.map(row => ({ table: 'stock_moves', row })));
+      }
+      rows.forEach(indexProduct);
       renderProducts();
-      toast(`${added} yeni ürün eklendi, ${updated} ürün güncellendi${skipped ? `, ${skipped} satır atlandı` : ''}`, 'ok');
+      toast(`${added} yeni ürün eklendi, ${rows.length - added} ürün güncellendi${dupBarcode ? ` (${dupBarcode} çakışan barkod korunarak atlandı)` : ''}`, 'ok');
       Sync.run();
     } catch (err) { toast('İçe aktarma başarısız: ' + err.message, 'err'); }
-  });
+  }
 
   // ---------- GÜN SONU ----------
   const pad = n => String(n).padStart(2, '0');
