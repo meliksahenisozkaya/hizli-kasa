@@ -367,3 +367,12 @@ body.mode-admin #navTabs .panel-badge { display: inline-block; }
 .pay-modal .btns button { padding: 14px 16px; font-size: 16px; }
 .pay-modal .btns .confirm { flex: 1; background: linear-gradient(180deg, #22c55e, #16a34a); box-shadow: 0 8px 22px rgba(22, 163, 74, .3); }
 .modal:focus { outline: none; }
+
+/* Kategoriler & gün sonu bölümleri */
+.chips button .cnt { font-size: 11px; opacity: .6; margin-left: 4px; }
+.cat-tag { display: inline-block; font-size: 12px; padding: 2px 9px; border-radius: 20px; background: var(--accent-soft); border: 1px solid var(--accent-line); color: #ffb28f; white-space: nowrap; }
+.cat-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cat-pick button { background: var(--panel3); border: 1px solid var(--line2); padding: 12px; text-align: left; }
+.cat-pick button:hover { border-color: var(--accent); filter: none; }
+.grid tr.sec td { background: #1b1b1f; color: #ffb28f; font-weight: 700; border-top: 1px solid var(--line2); }
+.grid tr.sec td span { color: var(--muted); font-weight: 500; font-size: 12px; margin-left: 6px; }

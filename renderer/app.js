@@ -44,6 +44,25 @@
     deviceId = await DB.getMeta('device_id', '');
     if (!deviceId) { deviceId = 'KASA-' + uuid().slice(0, 8).toUpperCase(); await DB.setMeta('device_id', deviceId); }
     $('#brand').textContent = settings.storeName || 'Hızlı Kasa';
+    // Kategorisi olmayan ürünlere addan tahmini kategori ata (bir kez)
+    const missing = [...products.values()].filter(p => !p.category);
+    if (missing.length) {
+      const ts = nowIso();
+      const rows = missing.map(p => ({ ...p, category: Importer.guessCategory(p.name), updated_at: ts }));
+      for (let i = 0; i < rows.length; i += 300) {
+        const part = rows.slice(i, i + 300);
+        await DB.write(part.map(value => ({ store: 'products', value })), part.map(row => ({ table: 'products', row })));
+      }
+      rows.forEach(indexProduct);
+    }
+  }
+  const catOf = p => p.category || Importer.guessCategory(p.name);
+  function allCategories() {
+    const set = new Set([...products.values()].filter(p => p.active).map(catOf));
+    const known = Importer.CATEGORIES.filter(c => set.has(c));
+    const extra = [...set].filter(c => !Importer.CATEGORIES.includes(c)).sort((a, b) => a.localeCompare(b, 'tr'));
+    const order = [...known.filter(c => c !== 'Diğer'), ...extra, ...known.filter(c => c === 'Diğer')];
+    return order;
   }
 
   // ---------- Bildirim & modal ----------
@@ -269,11 +288,11 @@
   }
 
   function renderChips() {
-    const groups = [...new Set([...products.values()].filter(p => p.active && p.group).map(p => p.group))]
-      .sort((a, b) => a.localeCompare(b, 'tr'));
-    if (activeGroup && !groups.includes(activeGroup)) activeGroup = '';
-    $('#groupChips').innerHTML = groups.length ? ['', ...groups].map(g =>
-      `<button data-g="${esc(g)}" class="${g === activeGroup ? 'on' : ''}">${g ? esc(g) : 'Tümü'}</button>`).join('') : '';
+    const cats = allCategories();
+    if (activeGroup && !cats.includes(activeGroup)) activeGroup = '';
+    const count = c => [...products.values()].filter(p => p.active && catOf(p) === c).length;
+    $('#groupChips').innerHTML = cats.length ? ['', ...cats].map(g =>
+      `<button data-g="${esc(g)}" class="${g === activeGroup ? 'on' : ''}">${g ? `${esc(g)} <span class="cnt">${count(g)}</span>` : 'Tümü'}</button>`).join('') : '';
   }
   $('#groupChips').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -284,7 +303,7 @@
     const raw = $('#scanInput').value.trim().replace(/^\d+(?:[.,]\d+)?\s*[*xX]\s*/, '');
     const q = lower(raw);
     const inCart = new Map(cart.map(l => [l.product_id, l.qty]));
-    let list = [...products.values()].filter(p => p.active && (!activeGroup || p.group === activeGroup))
+    let list = [...products.values()].filter(p => p.active && (!activeGroup || catOf(p) === activeGroup))
       .filter(p => !q || lower(p.name).includes(q) || (p.barcode || '').includes(raw) || (p.code || '') === raw);
     list.sort((a, b) => (popularity.get(b.id) || 0) - (popularity.get(a.id) || 0) || a.name.localeCompare(b.name, 'tr'));
     const total = list.length;
@@ -521,7 +540,7 @@
       <label>Ürün adı<input id="fName" value="${esc(v.name)}" ${opts.barcode || !isNew ? 'autofocus' : ''}></label>
       <div class="two">
         <label>Stok kodu (isteğe bağlı)<input id="fCode" value="${esc(v.code || '')}"></label>
-        <label>Grup (isteğe bağlı)<input id="fGroup" value="${esc(v.group || '')}"></label>
+        <label>Kategori (satış ekranı)<input id="fCat" list="catList" value="${esc(v.category || (v.name ? Importer.guessCategory(v.name) : ''))}" placeholder="ör. Fındık Ezmesi"></label>
       </div>
       <div class="two">
         <label>Satış fiyatı (KDV dahil ₺)<input id="fPrice" inputmode="decimal" value="${v.price === '' ? '' : String(v.price).replace('.', ',')}"></label>
@@ -552,7 +571,8 @@
         const row = {
           ...(p || {}),
           id: p ? p.id : uuid(), barcode: barcode || null, name, price: r2(price),
-          code: code || null, group: m.querySelector('#fGroup').value.trim() || null,
+          code: code || null, group: v.group || null,
+          category: m.querySelector('#fCat').value.trim() || Importer.guessCategory(name),
           stock: r3(stock), vat_rate: Number(m.querySelector('#fVat').value), unit: m.querySelector('#fUnit').value,
           min_stock: r3(min), active: p ? p.active : true, updated_at: ts
         };
@@ -624,13 +644,13 @@
     const showPassive = $('#showPassive').checked, onlyNoPrice = $('#onlyNoPrice').checked;
     listed = [...products.values()]
       .filter(p => (showPassive || p.active) && (!onlyNoPrice || !(p.price > 0)))
-      .filter(p => !q || lower(p.name).includes(q) || (p.barcode || '').includes(q) || lower(p.code).includes(q) || lower(p.group).includes(q))
+      .filter(p => !q || lower(p.name).includes(q) || (p.barcode || '').includes(q) || lower(p.code).includes(q) || lower(p.group).includes(q) || lower(catOf(p)).includes(q))
       .sort((a, b) => a.name.localeCompare(b.name, 'tr'));
     for (const id of [...selected]) if (!products.has(id)) selected.delete(id);
     const shown = listed.slice(0, 500);
     $('#prodBody').innerHTML = shown.map(p => `<tr class="${p.active ? '' : 'passive'} ${selected.has(p.id) ? 'sel' : ''}" data-id="${p.id}">
       <td class="cb"><input type="checkbox" data-a="sel" ${selected.has(p.id) ? 'checked' : ''}></td>
-      <td>${esc(p.code || '')}</td><td>${esc(p.barcode || '—')}</td><td>${esc(p.name)}</td><td>${esc(p.group || '')}</td>
+      <td>${esc(p.code || '')}</td><td>${esc(p.barcode || '—')}</td><td>${esc(p.name)}</td><td><span class="cat-tag">${esc(catOf(p))}</span></td>
       <td class="num ${p.price > 0 ? '' : 'noprice'}">${p.price > 0 ? money(p.price) : 'Fiyat yok'}</td><td class="num">%${p.vat_rate}</td>
 <td>${esc(p.unit)}</td>
       <td><div class="acts"><button data-a="edit">Düzenle</button>
@@ -641,6 +661,9 @@
     $('#prodFoot').textContent = `${listed.length} ürün listelendi${listed.length > 500 ? ' (ilk 500 gösteriliyor, aramayı daraltın)' : ''} · Toplam ${products.size} ürün · Fiyatsız ${noPrice}`;
     $('#selAll').checked = listed.length > 0 && listed.every(p => selected.has(p.id));
     $('#btnDeleteSel').classList.toggle('hidden', selected.size === 0);
+    $('#btnCatSel').classList.toggle('hidden', selected.size === 0);
+    $('#btnCatSel').textContent = `Kategori ata (${selected.size})`;
+    $('#catList').innerHTML = [...new Set([...Importer.CATEGORIES, ...allCategories()])].map(c => `<option value="${esc(c)}">`).join('');
     $('#btnDeleteSel').textContent = `Seçilenleri sil (${selected.size})`;
   }
   $('#prodBody').addEventListener('click', e => {
@@ -656,6 +679,32 @@
     renderProducts();
   });
   $('#btnDeleteSel').onclick = () => deleteProducts([...selected]);
+  $('#btnCatSel').onclick = () => {
+    const ids = [...selected].filter(id => products.has(id));
+    if (!ids.length) return;
+    const cats = [...new Set([...Importer.CATEGORIES, ...allCategories()])];
+    openModal(`<h2>Kategori ata</h2><div class="hint">${ids.length} ürünün satış ekranındaki kategorisi değişecek.</div>
+      <div class="cat-pick">${cats.map(c => `<button data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      <label>veya yeni kategori adı<input id="newCat" placeholder="ör. Hediyelik"></label>
+      <div class="btns"><button class="ghost" id="ncC">Vazgeç</button><button class="primary" id="ncO">Yeni kategoriyle kaydet</button></div>`, m => {
+      const apply = async cat => {
+        cat = String(cat || '').trim(); if (!cat) return toast('Kategori adı girin', 'err');
+        const ts = nowIso();
+        const rows = ids.map(id => ({ ...products.get(id), category: cat, updated_at: ts }));
+        try {
+          for (let i = 0; i < rows.length; i += 300) {
+            const part = rows.slice(i, i + 300);
+            await DB.write(part.map(value => ({ store: 'products', value })), part.map(row => ({ table: 'products', row })));
+          }
+          rows.forEach(indexProduct); selected.clear(); closeModal(); renderProducts();
+          toast(`${rows.length} ürün "${cat}" kategorisine alındı`, 'ok'); Sync.run();
+        } catch (e) { toast('Kaydedilemedi: ' + e.message, 'err'); }
+      };
+      m.querySelectorAll('.cat-pick button').forEach(b => b.onclick = () => apply(b.dataset.c));
+      m.querySelector('#ncO').onclick = () => apply(m.querySelector('#newCat').value);
+      m.querySelector('#ncC').onclick = closeModal;
+    });
+  };
   ['#prodSearch', '#showPassive', '#onlyNoPrice'].forEach(s => $(s).addEventListener('input', renderProducts));
   $('#btnNewProduct').onclick = () => productForm(null);
 
@@ -807,7 +856,7 @@
         vat_rate: Number.isFinite(it.vat) ? it.vat : old.vat_rate,
         active: true, updated_at: ts
       } : {
-        id: uuid(), code: it.code || null, barcode, name: it.name, group: it.group || null,
+        id: uuid(), code: it.code || null, barcode, name: it.name, group: it.group || null, category: Importer.guessCategory(it.name),
         price: Number.isFinite(it.price) ? r2(it.price) : 0, stock: 0,
         vat_rate: Number.isFinite(it.vat) ? it.vat : 10, unit: it.unit || 'adet', min_stock: 0, active: true, updated_at: ts
       };
@@ -874,10 +923,17 @@
       ['Toplam ciro', money(r.total)], ['Nakit', money(r.cash)], ['Kredi kartı', money(r.card)],
       ['Satış adedi', r.count], ['Ortalama sepet', money(r.count ? r.total / r.count : 0)]
     ].map(([l, v]) => `<div class="card-s"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
-    $('#repSales').innerHTML = r.sales.map(s => `<tr class="click ${s.status !== 'completed' ? 'cancel' : ''}" data-id="${s.id}">
+    const row = s => `<tr class="click ${s.status !== 'completed' ? 'cancel' : ''}" data-id="${s.id}">
       <td>${new Date(s.created_at).toLocaleTimeString('tr-TR')}</td><td>#${s.sale_no}</td><td class="num">${s.items.length}</td>
-      <td>${s.payment_type === 'cash' ? 'Nakit' : 'Kart'}${s.status !== 'completed' ? ' (iptal)' : ''}</td><td class="num">${money(s.total)}</td></tr>`).join('')
-      || '<tr><td colspan="5" style="color:var(--muted)">Bu tarihte satış yok</td></tr>';
+      <td>${s.payment_type === 'cash' ? 'Nakit' : 'Kart'}${s.status !== 'completed' ? ' (iptal)' : ''}</td><td class="num">${money(s.total)}</td></tr>`;
+    const section = (label, type, sum) => {
+      const list = r.sales.filter(s => s.payment_type === type);
+      return `<tr class="sec"><td colspan="4">${label} <span>${list.filter(s => s.status === 'completed').length} satış</span></td><td class="num">${money(sum)}</td></tr>`
+        + (list.map(row).join('') || '<tr><td colspan="5" style="color:var(--dim)">Satış yok</td></tr>');
+    };
+    $('#repSales').innerHTML = r.sales.length
+      ? section('Nakit satışlar', 'cash', r.cash) + section('Kredi kartı satışları', 'card', r.card)
+      : '<tr><td colspan="5" style="color:var(--muted)">Bu tarihte satış yok</td></tr>';
     $('#repTop').innerHTML = r.top.slice(0, 30).map(t => `<tr><td>${esc(t.name)}</td><td class="num">${qtyFmt(t.qty)}</td><td class="num">${money(t.total)}</td></tr>`).join('');
   }
   $('#repSales').addEventListener('click', e => {
@@ -891,10 +947,20 @@
       <div class="hint">${new Date(s.created_at).toLocaleString('tr-TR')} · ${s.payment_type === 'cash' ? 'Nakit' : 'Kart'}</div>
       <table class="grid items"><tbody>${s.items.map(i => `<tr><td>${esc(i.name)}</td><td class="num">${qtyFmt(i.qty)} x ${money(i.price)}</td><td class="num">${money(i.total)}</td></tr>`).join('')}</tbody></table>
       <div class="big-total">${money(s.total)}</div>
-      <div class="btns">${s.status === 'completed' ? '<button class="danger" id="dCancel">Satışı iptal et</button>' : ''}<span class="grow"></span>
+      <div class="btns">${s.status === 'completed' ? '<button class="danger" id="dCancel">Satışı iptal et</button>' : ''}${role === 'admin' ? '<button class="danger" id="dDelete">Kaydı sil</button>' : ''}<span class="grow"></span>
         <button class="ghost" id="dPrint">Fiş yazdır</button><button class="primary" id="dClose">Kapat</button></div>`, m => {
       m.querySelector('#dClose').onclick = closeModal;
       m.querySelector('#dPrint').onclick = () => printSale(s);
+      const del = m.querySelector('#dDelete');
+      if (del) del.onclick = async () => {
+        if (role !== 'admin') return;
+        if (!(await confirmBox('Satış kaydını sil', `#${s.sale_no} numaralı ${money(s.total)} tutarlı satış kaydı bu bilgisayardan ve buluttan kalıcı olarak silinecek. Bu işlem geri alınamaz.`, 'Kalıcı olarak sil', true))) return;
+        try {
+          await DB.write([{ store: 'sales', del: s.id }], [{ table: 'sales', row: { id: s.id }, op: 'delete' }]);
+          if (lastSale && lastSale.id === s.id) { lastSale = null; renderLastSale(); }
+          toast(`Satış #${s.sale_no} silindi`, 'ok'); renderReport(); Sync.run();
+        } catch (e) { toast('Silinemedi: ' + e.message, 'err'); }
+      };
       const c = m.querySelector('#dCancel');
       if (c) c.onclick = async () => {
         if (!(await confirmBox('Satış iptali', `#${s.sale_no} numaralı ${money(s.total)} tutarlı satış iptal edilecek olarak işaretlenecek ve ciroya dahil edilmeyecek.`, 'İptal et', true))) return;

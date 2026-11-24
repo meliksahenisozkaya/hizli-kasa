@@ -109,6 +109,22 @@ const Importer = (() => {
     return lines.map(l => l.split(d).map(x => x.trim().replace(/^"|"$/g, '')));
   }
 
-  return { parse, csvRows, fixTr, norm };
+  // Ürün adından kategori tahmini (Halis Fındık ürün yapısına göre). Yönetici panelinden değiştirilebilir.
+  const CATEGORIES = ['Fındık Ezmesi', 'Krokan & Çikolata', 'Kıyılmış & Un', 'Kavrulmuş İç', 'Natürel İç', 'Kabuklu & Çıtlama', 'Diğer'];
+  function guessCategory(name) {
+    const n = norm(name);
+    if (/bedel|ucret|aidat|vergi|belge|beyanname|fonu|teminat|tescil|navlun|gumrukle|kira|motorin|lpg|tahsilat|fark|sortex|islemi|tasdik|yansitma|tevkifat|klise|mailorder|ilan |sistem kullanim|kapsul|makina|arac|kargo|nakliye|pudra seker|toz seker|tuz$|karincabas|kavanoz|havlu/.test(n)) return 'Diğer';
+    if (/etiket|kolisi|koli\b|kutusu|kutu\b|poset|torba|kapak|naylon|canta|bandi|bobin|cuval|palet|kova|callebaut|kuvertur|malzeme/.test(n)) return 'Diğer';
+    if (/yaglik|ozurlu|zari\b|kabuk$/.test(n)) return 'Diğer';
+    if (/ezme|pure|krema/.test(n)) return 'Fındık Ezmesi';
+    if (/krokan|cikolata|finci|kurabiye/.test(n)) return 'Krokan & Çikolata';
+    if (/kiyilmis|unu\b|un findik|dilinmis|kirik/.test(n)) return 'Kıyılmış & Un';
+    if (/kabuklu|citla|tombul|tombu\b/.test(n)) return 'Kabuklu & Çıtlama';
+    if (/naturel/.test(n)) return 'Natürel İç';
+    if (/ic findik|kav\.?|kavrulmus|pikola|beyazla|zarli|tuzlu|cikinti|findik \d/.test(n)) return 'Kavrulmuş İç';
+    return 'Diğer';
+  }
+
+  return { parse, csvRows, fixTr, norm, guessCategory, CATEGORIES };
 })();
 if (typeof module !== 'undefined') module.exports = Importer;

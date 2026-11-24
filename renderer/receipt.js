@@ -57,6 +57,15 @@ const Receipt = (() => {
   }
 
   function dayReport(r, settings) {
+    const tm = iso => new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+    const ok = (r.sales || []).filter(s => s.status === 'completed').slice().sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const block = (title, type, sum) => {
+      const list = ok.filter(s => s.payment_type === type);
+      return `<div class="b">${title} (${list.length})</div>
+        ${list.length ? `<table class="small">${list.map(s => `<tr><td>${tm(s.created_at)}</td><td>#${s.sale_no}</td><td class="r">${tl(s.total)}</td></tr>`).join('')}</table>`
+          : '<div class="small">Satış yok</div>'}
+        <div class="row b"><span>${title} toplamı</span><span>${tl(sum)}</span></div><hr>`;
+    };
     const top = r.top.slice(0, 15).map(t =>
       `<tr><td>${esc(t.name)}</td><td class="r">${qtyFmt(t.qty)}</td><td class="r">${tl(t.total)}</td></tr>`).join('');
     return shell(settings, `
@@ -64,13 +73,13 @@ const Receipt = (() => {
       <div class="c b">GÜN SONU RAPORU</div>
       <div class="c">${esc(r.dateLabel)}</div>
       <div class="c small">Yazdırma: ${new Date().toLocaleString('tr-TR')}</div><hr>
-      <div class="row"><span>Satış adedi</span><span>${r.count}</span></div>
+      ${block('NAKİT SATIŞLAR', 'cash', r.cash)}
+      ${block('KREDİ KARTI SATIŞLARI', 'card', r.card)}
       <div class="row"><span>Nakit</span><span>${tl(r.cash)}</span></div>
       <div class="row"><span>Kredi kartı</span><span>${tl(r.card)}</span></div>
+      <div class="row"><span>Satış adedi</span><span>${r.count}</span></div>
       <hr><div class="row big"><span>TOPLAM</span><span>${tl(r.total)} ₺</span></div><hr>
       ${r.cancelled ? `<div class="row small"><span>İptal edilen (${r.cancelled})</span><span>${tl(r.cancelledTotal)}</span></div><hr>` : ''}
-      ${r.firstSale ? `<div class="row small"><span>İlk satış</span><span>${r.firstSale}</span></div>
-      <div class="row small"><span>Son satış</span><span>${r.lastSale}</span></div><hr>` : ''}
       ${top ? `<div class="b">En çok satanlar</div><table class="small">${top}</table><hr>` : ''}
       <br>&nbsp;`);
   }

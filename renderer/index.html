@@ -97,14 +97,16 @@
       <label class="chk"><input type="checkbox" id="showPassive"> Pasifleri göster</label>
       <label class="chk"><input type="checkbox" id="onlyNoPrice"> Sadece fiyatsız</label>
       <span class="grow"></span>
+      <button id="btnCatSel" class="ghost hidden">Kategori ata</button>
       <button id="btnDeleteSel" class="danger hidden">Seçilenleri sil</button>
+      <datalist id="catList"></datalist>
       <button id="btnImport" class="ghost">Excel / CSV içe aktar</button>
       <input type="file" id="importFile" accept=".xls,.xlsx,.csv,.txt" hidden>
       <button id="btnNewProduct" class="primary">+ Yeni ürün</button>
     </div>
     <div class="table-wrap">
       <table class="grid">
-        <thead><tr><th class="cb"><input type="checkbox" id="selAll" title="Listelenenlerin tümünü seç"></th><th>Kod</th><th>Barkod</th><th>Ürün adı</th><th>Grup</th><th class="num">Fiyat</th><th class="num">KDV</th><th>Birim</th><th></th></tr></thead>
+        <thead><tr><th class="cb"><input type="checkbox" id="selAll" title="Listelenenlerin tümünü seç"></th><th>Kod</th><th>Barkod</th><th>Ürün adı</th><th>Kategori</th><th class="num">Fiyat</th><th class="num">KDV</th><th>Birim</th><th></th></tr></thead>
         <tbody id="prodBody"></tbody>
       </table>
     </div>
