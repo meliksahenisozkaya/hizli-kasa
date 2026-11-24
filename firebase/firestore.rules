@@ -1,0 +1,12 @@
+rules_version = '2';
+// Hızlı Kasa - Firestore güvenlik kuralları
+// Aşağıdaki e-posta adresini, Authentication'da oluşturduğunuz kasa e-postasıyla değiştirin.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{collection}/{docId} {
+      allow read, write: if request.auth != null
+                         && request.auth.token.email == 'kasa@sirketiniz.com'
+                         && collection in ['products', 'sales', 'stock_moves'];
+    }
+  }
+}
