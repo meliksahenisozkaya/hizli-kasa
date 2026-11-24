@@ -1,0 +1,9 @@
+{
+  "name": "Hızlı Kasa",
+  "short_name": "Hızlı Kasa",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0c0c0e",
+  "theme_color": "#0c0c0e",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
