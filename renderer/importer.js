@@ -114,7 +114,7 @@ const Importer = (() => {
   }
 
   // Ürün adından kategori tahmini (Halis Fındık ürün yapısına göre). Yönetici panelinden değiştirilebilir.
-  const CATEGORIES = ['Fındık Ezmesi', 'Krokan & Çikolata', 'Kıyılmış & Un', 'Kavrulmuş İç', 'Natürel İç', 'Kabuklu & Çıtlama', 'Diğer'];
+  const CATEGORIES = ['Kabuklu & Çıtlama', 'Natürel İç', 'Kavrulmuş İç', 'Kıyılmış & Un', 'Krokan & Çikolata', 'Fındık Ezmesi', 'Diğer'];
   function guessCategory(name) {
     const n = norm(name);
     if (/bedel|ucret|aidat|vergi|belge|beyanname|fonu|teminat|tescil|navlun|gumrukle|kira|motorin|lpg|tahsilat|fark|sortex|islemi|tasdik|yansitma|tevkifat|klise|mailorder|ilan |sistem kullanim|kapsul|makina|arac|kargo|nakliye|pudra seker|toz seker|tuz$|karincabas|kavanoz|havlu/.test(n)) return 'Diğer';
