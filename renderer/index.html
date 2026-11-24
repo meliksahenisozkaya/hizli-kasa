@@ -26,15 +26,10 @@
     <section class="sale-left">
       <div class="scan">
         <input id="scanInput" autocomplete="off" spellcheck="false"
-               placeholder="Barkod okutun veya ürün adı yazın  (miktar için: 3*barkod)">
+               placeholder="Barkod okutun veya ürün ara  (miktar için: 3*barkod)">
       </div>
-      <div class="cart-wrap">
-        <table class="cart">
-          <thead><tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Fiyat</th><th class="num">Tutar</th><th></th></tr></thead>
-          <tbody id="cartBody"></tbody>
-        </table>
-        <div class="empty" id="cartEmpty">Sepet boş — barkod okutarak başlayın</div>
-      </div>
+      <div class="chips" id="groupChips"></div>
+      <div class="tiles" id="tiles"></div>
     </section>
     <aside class="sale-right">
       <div class="total-box">
@@ -42,8 +37,14 @@
         <div class="total" id="cartTotal">0,00 ₺</div>
         <div class="sub" id="cartCount">0 kalem</div>
       </div>
-      <button class="pay cash" id="btnCash">NAKİT <kbd>F8</kbd></button>
-      <button class="pay card" id="btnCard">KART / POS <kbd>F9</kbd></button>
+      <div class="cart-panel">
+        <div class="cart-list" id="cartBody"></div>
+        <div class="empty" id="cartEmpty">Sepet boş<br><small>Ürüne tıklayın veya barkod okutun</small></div>
+      </div>
+      <div class="pay-row">
+        <button class="pay cash" id="btnCash">NAKİT <kbd>F8</kbd></button>
+        <button class="pay card" id="btnCard">KART / POS <kbd>F9</kbd></button>
+      </div>
       <button class="ghost" id="btnClear">Sepeti temizle</button>
       <div class="last-sale" id="lastSale"></div>
     </aside>

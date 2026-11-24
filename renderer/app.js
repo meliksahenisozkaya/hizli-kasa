@@ -97,7 +97,7 @@
     currentTab = t;
     document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
     document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.id === 'tab-' + t));
-    if (t === 'sale') focusScan();
+    if (t === 'sale') { renderChips(); renderTiles(); focusScan(); }
     if (t === 'products') { renderProducts(); $('#prodSearch').focus(); }
     if (t === 'report') renderReport();
     if (t === 'settings') renderSettings();
@@ -132,9 +132,10 @@
     if (!(qty > 0)) { toast('Geçersiz miktar', 'err'); beep(false); return; }
     if (!priceOk && !(p.price > 0)) { beep(false); return askPrice(p, qty); }
     let line = cart.find(l => l.product_id === p.id);
+    const before = line ? line.qty : 0;
     if (line) { line.qty = r3(line.qty + qty); cart.splice(cart.indexOf(line), 1); cart.unshift(line); }
     else { line = { product_id: p.id, barcode: p.barcode, name: p.name, price: p.price, vat_rate: p.vat_rate, unit: p.unit, qty: r3(qty) }; cart.unshift(line); }
-    if (p.stock - line.qty < 0) toast(`Stok yetersiz: ${p.name} (mevcut ${qtyFmt(p.stock)})`, 'warn');
+    if (p.stock - line.qty < 0 && p.stock - before >= 0) toast(`Stok yetersiz: ${p.name} (mevcut ${qtyFmt(p.stock)})`, 'warn');
     beep(true);
     renderCart(true);
   }
@@ -144,22 +145,28 @@
   function renderCart(flashFirst = false) {
     $('#cartBody').innerHTML = cart.map((l, i) => {
       const p = products.get(l.product_id);
-      const warn = p && p.stock - l.qty < 0 ? `<span class="warn">Stok: ${qtyFmt(p.stock)}</span>` : '';
-      return `<tr class="${i === 0 && flashFirst ? 'flash' : ''}" data-i="${i}">
-        <td>${esc(l.name)}${warn}</td>
-        <td class="num"><span class="qty"><button data-a="dec">−</button><span data-a="edit">${qtyFmt(l.qty)}</span><button data-a="inc">+</button></span></td>
-        <td class="num">${money(l.price)}</td>
-        <td class="num"><b>${money(lineTotal(l))}</b></td>
-        <td class="num"><button class="rm" data-a="rm" title="Kaldır">✕</button></td></tr>`;
+      const warn = p && p.stock - l.qty < 0 ? ` <span class="warn">· stok ${qtyFmt(p.stock)}</span>` : '';
+      return `<div class="ci ${i === 0 && flashFirst ? 'flash' : ''}" data-i="${i}">
+        <div class="nm">${esc(l.name)}</div><div class="lt">${money(lineTotal(l))}</div>
+        <div class="row2">
+          <button class="qbtn minus" data-a="dec" title="Bir azalt">−</button>
+          <span class="qty" data-a="edit" title="Miktarı değiştir">${qtyFmt(l.qty)}</span>
+          <button class="qbtn" data-a="inc" title="Bir artır">+</button>
+          <span class="up">${esc(l.unit || '')} × ${money(l.price)}${warn}</span>
+          <button class="rm" data-a="rm" title="Sepetten çıkar">✕ Çıkar</button>
+        </div></div>`;
     }).join('');
     $('#cartEmpty').classList.toggle('hidden', cart.length > 0);
     $('#cartTotal').textContent = money(cartTotal());
-    $('#cartCount').textContent = `${cart.length} kalem`;
+    const pieces = cart.reduce((a, l) => a + (['adet', 'paket', 'koli', 'kavanoz', 'teneke'].includes(l.unit) ? l.qty : 0), 0);
+    $('#cartCount').textContent = `${cart.length} kalem${pieces ? ` · ${qtyFmt(pieces)} adet` : ''}`;
+    if (flashFirst) $('#cartBody').parentElement.scrollTop = 0;
+    renderTiles();
   }
 
   $('#cartBody').addEventListener('click', e => {
     const a = e.target.dataset.a; if (!a) return;
-    const i = Number(e.target.closest('tr').dataset.i);
+    const i = Number(e.target.closest('.ci').dataset.i);
     const l = cart[i]; if (!l) return;
     if (a === 'inc') l.qty = r3(l.qty + 1);
     if (a === 'dec') { l.qty = r3(l.qty - 1); if (l.qty <= 0) cart.splice(i, 1); }
@@ -167,6 +174,72 @@
     if (a === 'edit') return editQty(l);
     renderCart(); focusScan();
   });
+
+  // ---------- Ürün kutuları ----------
+  const WEIGHED = ['kg', 'gr', 'lt'];
+  let popularity = new Map();
+  let activeGroup = '';
+
+  async function loadPopularity() {
+    const since = new Date(Date.now() - 60 * 864e5).toISOString();
+    const sales = await DB.range('sales', 'created_at', since, '9999');
+    popularity = new Map();
+    sales.filter(x => x.status === 'completed').forEach(x => x.items.forEach(i =>
+      popularity.set(i.product_id, (popularity.get(i.product_id) || 0) + 1)));
+  }
+
+  function renderChips() {
+    const groups = [...new Set([...products.values()].filter(p => p.active && p.group).map(p => p.group))]
+      .sort((a, b) => a.localeCompare(b, 'tr'));
+    if (activeGroup && !groups.includes(activeGroup)) activeGroup = '';
+    $('#groupChips').innerHTML = groups.length ? ['', ...groups].map(g =>
+      `<button data-g="${esc(g)}" class="${g === activeGroup ? 'on' : ''}">${g ? esc(g) : 'Tümü'}</button>`).join('') : '';
+  }
+  $('#groupChips').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    activeGroup = b.dataset.g; renderChips(); renderTiles(); focusScan();
+  });
+
+  function renderTiles() {
+    const raw = $('#scanInput').value.trim().replace(/^\d+(?:[.,]\d+)?\s*[*xX]\s*/, '');
+    const q = lower(raw);
+    const inCart = new Map(cart.map(l => [l.product_id, l.qty]));
+    let list = [...products.values()].filter(p => p.active && (!activeGroup || p.group === activeGroup))
+      .filter(p => !q || lower(p.name).includes(q) || (p.barcode || '').includes(raw) || (p.code || '') === raw);
+    list.sort((a, b) => (popularity.get(b.id) || 0) - (popularity.get(a.id) || 0) || a.name.localeCompare(b.name, 'tr'));
+    const total = list.length;
+    list = list.slice(0, 240);
+    $('#tiles').innerHTML = list.map(p => {
+      const c = inCart.get(p.id);
+      return `<button class="tile ${c ? 'in' : ''}" data-id="${p.id}" title="${esc(p.name)}">
+        ${c ? `<span class="badge">${qtyFmt(c)} ${esc(p.unit)}</span>` : ''}
+        <span class="n">${esc(p.name)}</span>
+        <span class="f"><span class="p ${p.price > 0 ? '' : 'none'}">${p.price > 0 ? money(p.price) : 'Fiyat yok'}</span>
+        <span class="s ${isLow(p) ? 'low' : ''}">${qtyFmt(p.stock)} ${esc(p.unit)}</span></span></button>`;
+    }).join('') + (total > 240 ? `<div class="none">${total - 240} ürün daha var — aramayı daraltın</div>` : '')
+      || `<div class="none">${products.size ? 'Eşleşen ürün yok' : 'Henüz ürün yok — Ürünler (F2) ekranından ekleyin'}</div>`;
+  }
+  $('#tiles').addEventListener('click', e => {
+    const t = e.target.closest('.tile'); if (!t) return;
+    const p = products.get(t.dataset.id); if (!p) return;
+    if (WEIGHED.includes(p.unit)) askQty(p); else { addToCart(p, 1); focusScan(); }
+  });
+  $('#scanInput').addEventListener('input', () => renderTiles());
+
+  function askQty(p) {
+    openModal(`<h2>${esc(p.name)}</h2>
+      <label>Miktar (${esc(p.unit)})<input id="aq" inputmode="decimal" autofocus placeholder="ör. 0,5"></label>
+      <div class="btns"><button class="ghost" id="aqC">Vazgeç</button><button class="primary" id="aqO">Sepete ekle</button></div>`, m => {
+      const ok = () => {
+        const q = parseNum(m.querySelector('#aq').value);
+        if (!(q > 0)) return toast('Geçerli bir miktar girin', 'err');
+        closeModal(); addToCart(p, r3(q));
+      };
+      m.querySelector('#aqO').onclick = ok;
+      m.querySelector('#aqC').onclick = closeModal;
+      m.querySelector('#aq').onkeydown = e => { if (e.key === 'Enter') ok(); };
+    });
+  }
 
   function editQty(l) {
     openModal(`<h2>${esc(l.name)}</h2><label>Miktar (${esc(l.unit)})<input id="mq" value="${String(l.qty).replace('.', ',')}" autofocus></label>
@@ -223,8 +296,8 @@
   }
 
   $('#scanInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter') { const v = e.target.value; e.target.value = ''; handleScan(v); }
-    else if (e.key === 'Escape') e.target.value = '';
+    if (e.key === 'Enter') { const v = e.target.value; e.target.value = ''; renderTiles(); handleScan(v); }
+    else if (e.key === 'Escape') { e.target.value = ''; renderTiles(); }
     else if (e.key === 'Delete' && !e.target.value && cart.length) { cart.shift(); renderCart(); }
   });
   document.addEventListener('click', e => {
@@ -298,6 +371,7 @@
       saleNo = no;
       updated.forEach(indexProduct);
       lastSale = sale;
+      items.forEach(i => popularity.set(i.product_id, (popularity.get(i.product_id) || 0) + 1));
       cart = [];
       renderCart(); renderLastSale();
       toast(`Satış #${no} kaydedildi — ${money(sale.total)}`, 'ok');
@@ -857,7 +931,8 @@
     try {
       await DB.open();
       await loadAll();
-      renderCart(); renderLastSale();
+      await loadPopularity();
+      renderChips(); renderCart(); renderLastSale();
       Sync.start();
       focusScan();
     } catch (e) {
