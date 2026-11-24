@@ -93,10 +93,11 @@
   }
 
   // ---------- Sekmeler ----------
-  // ---------- Giriş / yetki ----------
-  let role = null;   // null: sadece satış · 'user': gün sonu + ayarlar · 'admin': hepsi
-  const TAB_ROLE = { sale: null, report: 'user', settings: 'user', products: 'admin', security: 'admin' };
-  const canSee = t => TAB_ROLE[t] === null || (role === 'admin') || (role === 'user' && TAB_ROLE[t] === 'user');
+  // ---------- Açılış / yönetici girişi ----------
+  let role = null;            // 'admin' iken yönetici sekmeleri açık
+  let mode = 'home';          // 'home' | 'sale' | 'admin'
+  const ADMIN_TABS = ['products', 'settings', 'security'];
+  const canSee = t => !ADMIN_TABS.includes(t) || role === 'admin';
 
   async function sha(text) {
     const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -107,73 +108,56 @@
     let a = await DB.getMeta('auth', null);
     if (!a) {
       const salt = uuid();
-      a = { salt, userHash: await hashPass(salt, '1234'), adminUser: 'admin', adminHash: await hashPass(salt, '1234') };
+      a = { salt, adminUser: 'admin', adminHash: await hashPass(salt, '1234') };
       await DB.setMeta('auth', a);
     }
     return a;
   }
 
-  function loginBox(kind) {
-    const admin = kind === 'admin';
-    openModal(`<div class="lk"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#fff" stroke-width="2">${admin
-      ? '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/>' : '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>'}</svg></div>
-      <h2>${admin ? 'Yönetici paneli' : 'Kullanıcı alanı'}</h2>
-      <div class="hint">${admin ? 'Ürünler, gün sonu, ayarlar ve şifreler' : 'Gün sonu ve ayarlar'}</div>
-      ${admin ? '<label>Kullanıcı adı<input id="lgU" autocomplete="off" autofocus></label>' : ''}
-      <label>Şifre<input id="lgP" type="password" autocomplete="off" ${admin ? '' : 'autofocus'}></label>
-      <div class="btns"><button class="ghost" id="lgC">Vazgeç</button><button class="primary" id="lgO">Giriş</button></div>`, m => {
-      m.classList.add('login');
-      modalClose = () => m.classList.remove('login');
-      const go = async () => {
-        const a = await getAuth();
-        const pass = m.querySelector('#lgP').value;
-        const ok = admin
-          ? (m.querySelector('#lgU').value.trim().toLocaleLowerCase('tr-TR') === a.adminUser.toLocaleLowerCase('tr-TR') && await hashPass(a.salt, pass) === a.adminHash)
-          : (await hashPass(a.salt, pass) === a.userHash || await hashPass(a.salt, pass) === a.adminHash);
-        if (!ok) {
-          beep(false); m.classList.remove('shake'); void m.offsetWidth; m.classList.add('shake');
-          m.querySelector('#lgP').value = ''; m.querySelector('#lgP').focus();
-          return toast(admin ? 'Kullanıcı adı veya şifre hatalı' : 'Şifre hatalı', 'err');
-        }
-        role = admin ? 'admin' : 'user';
-        closeModal();
-        showTab(admin ? 'products' : 'report');
-      };
-      m.querySelector('#lgO').onclick = go;
-      m.querySelector('#lgC').onclick = closeModal;
-      m.querySelectorAll('input').forEach(i => i.onkeydown = e => { if (e.key === 'Enter') go(); });
-    });
-  }
-  function lockPanel() { role = null; showTab('sale'); }
-  $('#btnUserArea').onclick = () => loginBox('user');
-  $('#btnAdmin').onclick = () => loginBox('admin');
-  $('#btnExitPanel').onclick = lockPanel;
+  function goHome() { role = null; mode = 'home'; showTab('home'); }
+  function goSale() { role = null; mode = 'sale'; showTab('sale'); }
+  function goLogin() { mode = 'home'; showTab('login'); $('#lgU').value = ''; $('#lgP').value = ''; setTimeout(() => $('#lgU').focus(), 30); }
+  $('#goSale').onclick = goSale;
+  $('#goAdmin').onclick = goLogin;
+  $('#lgBack').onclick = goHome;
+  $('#btnHome').onclick = goHome;
+  $('#btnAdminExit').onclick = goHome;
+  $('#loginForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const a = await getAuth();
+    const ok = $('#lgU').value.trim().toLocaleLowerCase('tr-TR') === a.adminUser.toLocaleLowerCase('tr-TR')
+      && await hashPass(a.salt, $('#lgP').value) === a.adminHash;
+    if (!ok) {
+      beep(false);
+      const f = $('#loginForm'); f.classList.remove('shake'); void f.offsetWidth; f.classList.add('shake');
+      $('#lgP').value = ''; $('#lgP').focus();
+      return toast('Kullanıcı adı veya şifre hatalı', 'err');
+    }
+    role = 'admin'; mode = 'admin';
+    showTab('products');
+  });
 
   function renderHeader() {
-    const inPanel = !!role && currentTab !== 'sale';
-    $('#panelTabs').classList.toggle('hidden', !inPanel);
-    $('#btnUserArea').classList.toggle('hidden', inPanel);
-    $('#btnAdmin').classList.toggle('hidden', inPanel);
-    $('#btnExitPanel').classList.toggle('hidden', !inPanel);
-    $('#panelBadge').textContent = role === 'admin' ? 'Yönetici' : 'Kullanıcı';
-    document.querySelectorAll('#panelTabs button').forEach(b => b.classList.toggle('hidden', !canSee(b.dataset.tab)));
+    const full = currentTab === 'home' || currentTab === 'login';
+    $('#topbar').classList.toggle('hidden', full);
+    document.body.classList.toggle('no-top', full);
+    document.body.classList.toggle('mode-admin', mode === 'admin');
+    document.querySelectorAll('#navTabs button').forEach(b => {
+      const m = b.dataset.mode;
+      b.classList.toggle('hidden', !(m === 'both' || m === mode));
+    });
+    $('#btnHome').classList.toggle('hidden', mode !== 'sale');
+    $('#btnAdminExit').classList.toggle('hidden', mode !== 'admin');
+    if (currentTab === 'home') {
+      $('#homeStore').textContent = settings.storeName || 'SATIŞ SİSTEMİ';
+      $('#homeFoot').textContent = window.kasa ? '' : '';
+    }
   }
 
-  $('#btnSecUser').onclick = async () => {
-    if (role !== 'admin') return;
-    const p1 = $('#secUserNew').value, p2 = $('#secUserNew2').value;
-    if (p1.length < 4) return toast('Şifre en az 4 karakter olmalı', 'err');
-    if (p1 !== p2) return toast('Şifreler aynı değil', 'err');
-    const a = await getAuth();
-    a.userHash = await hashPass(a.salt, p1);
-    await DB.setMeta('auth', a);
-    $('#secUserNew').value = $('#secUserNew2').value = '';
-    toast('Kullanıcı şifresi değiştirildi', 'ok');
-  };
   $('#btnSecAdmin').onclick = async () => {
     if (role !== 'admin') return;
     const a = await getAuth();
-    if (await hashPass(a.salt, $('#secAdminCur').value) !== a.adminHash) return toast('Mevcut yönetici şifresi hatalı', 'err');
+    if (await hashPass(a.salt, $('#secAdminCur').value) !== a.adminHash) return toast('Mevcut şifre hatalı', 'err');
     const name = $('#secAdminName').value.trim(), p1 = $('#secAdminNew').value, p2 = $('#secAdminNew2').value;
     if (!name) return toast('Kullanıcı adı boş olamaz', 'err');
     if (p1 || p2) {
@@ -189,7 +173,6 @@
 
   function showTab(t) {
     if (!canSee(t)) return;
-    if (t === 'sale') role = null;
     currentTab = t;
     renderHeader();
     document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
@@ -401,15 +384,20 @@
     if (currentTab === 'sale' && !modalOpen() && !e.target.closest('input,button,select,textarea')) focusScan();
   });
 
+  const AWAIT = `<div class="await-pill"><span class="dot"></span>Ödeme onayı bekleniyor</div>`;
+
   function payCash() {
     if (!cart.length) return toast('Sepet boş', 'warn');
     const total = cartTotal();
-    const notes = [...new Set([total, 50, 100, 200, 500, 1000].map(Number))].filter(n => n >= total || n === total).slice(0, 8);
-    openModal(`<h2>Nakit ödeme</h2><div class="big-total">${money(total)}</div>
+    const notes = [...new Set([total, 50, 100, 200, 500, 1000].map(Number))].filter(n => n >= total).slice(0, 8);
+    openModal(`${AWAIT}<h2>Nakit ödeme</h2><div class="big-total">${money(total)}</div>
       <label>Alınan para (boş bırakılırsa tam tutar)<input id="cg" inputmode="decimal" autofocus></label>
       <div class="quick">${notes.map(n => `<button data-v="${n}">${n === total ? 'Tam' : n.toLocaleString('tr-TR')}</button>`).join('')}</div>
       <div>Para üstü</div><div class="change-v" id="chg">0,00 ₺</div>
-      <div class="btns"><button class="ghost" id="cc">Vazgeç (Esc)</button><button class="primary" id="co">Satışı tamamla (Enter)</button></div>`, m => {
+      <div class="hint">Parayı müşteriden aldıktan sonra onaylayın.</div>
+      <div class="btns"><button class="ghost" id="cc">Vazgeç (Esc)</button><button class="primary confirm" id="co">✓ Ödemeyi aldım, onaylıyorum</button></div>`, m => {
+      m.classList.add('pay-modal');
+      modalClose = () => m.classList.remove('pay-modal');
       const inp = m.querySelector('#cg');
       const calc = () => {
         const v = inp.value.trim() === '' ? total : parseNum(inp.value);
@@ -427,14 +415,30 @@
       };
       inp.oninput = calc;
       inp.onkeydown = e => { if (e.key === 'Enter') ok(); };
-      m.querySelectorAll('.quick button').forEach(b => b.onclick = () => { inp.value = String(b.dataset.v).replace('.', ','); calc(); ok(); });
+      m.querySelectorAll('.quick button').forEach(b => b.onclick = () => { inp.value = String(b.dataset.v).replace('.', ','); calc(); m.querySelector('#co').focus(); });
       m.querySelector('#co').onclick = ok;
       m.querySelector('#cc').onclick = closeModal;
+      m.onkeydown = e => { if (e.key === 'F8') { e.preventDefault(); e.stopPropagation(); ok(); } };
     });
   }
-  async function payCard() {
+
+  function payCard() {
     if (!cart.length) return toast('Sepet boş', 'warn');
-    await completeSale('card', null, null);
+    const total = cartTotal();
+    openModal(`${AWAIT}<h2>Kart / POS ödemesi</h2>
+      <div class="big-total">${money(total)}</div>
+      <div class="pos-hint"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M8 6h8v4H8z"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/></svg>
+        <span>Tutarı POS cihazından çekin. Ödeme onaylandıktan sonra aşağıdaki düğmeye basın.</span></div>
+      <div class="btns"><button class="ghost" id="kc">Vazgeç (Esc)</button><button class="primary confirm" id="ko">✓ Ödemeyi aldım, onaylıyorum <kbd>F9</kbd></button></div>`, m => {
+      m.classList.add('pay-modal');
+      modalClose = () => m.classList.remove('pay-modal');
+      const ok = async () => { closeModal(); await completeSale('card', null, null); };
+      m.querySelector('#ko').onclick = ok;
+      m.querySelector('#kc').onclick = closeModal;
+      m.tabIndex = -1;
+      setTimeout(() => m.focus(), 40);          // Enter/barkod okuyucu yanlışlıkla onaylamasın
+      m.onkeydown = e => { if (e.key === 'F9') { e.preventDefault(); e.stopPropagation(); ok(); } };
+    });
   }
 
   let saving = false;
@@ -1025,15 +1029,20 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && modalOpen()) { e.preventDefault(); closeModal(); return; }
     if (modalOpen()) return;
-    if (e.key === 'F1') { e.preventDefault(); lockPanel(); return; }
-    const tabs = { F2: 'products', F3: 'report', F4: 'settings', F5: 'security' };
-    if (tabs[e.key]) { e.preventDefault(); if (role) showTab(tabs[e.key]); return; }
+    if (currentTab === 'home') {
+      if (e.key === '1') { e.preventDefault(); goSale(); }
+      if (e.key === '2') { e.preventDefault(); goLogin(); }
+      return;
+    }
+    if (currentTab === 'login') return;
+    const keys = mode === 'admin' ? { F2: 'products', F3: 'report', F4: 'settings', F5: 'security' } : { F1: 'sale', F3: 'report' };
+    if (keys[e.key]) { e.preventDefault(); showTab(keys[e.key]); return; }
     if (currentTab === 'sale') {
       if (e.key === 'F8') { e.preventDefault(); payCash(); }
       if (e.key === 'F9') { e.preventDefault(); payCard(); }
     }
   });
-  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  document.querySelectorAll('#navTabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $('#btnCash').onclick = payCash;
   $('#btnCard').onclick = payCard;
   $('#btnClear').onclick = async () => {
@@ -1050,7 +1059,7 @@
       await loadAll();
       await loadPopularity();
       await getAuth();
-      renderHeader(); renderChips(); renderCart(); renderLastSale();
+      renderChips(); renderCart(); renderLastSale(); goHome();
       Sync.start();
       focusScan();
     } catch (e) {

@@ -8,29 +8,61 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="topbar">
+  <header class="topbar hidden" id="topbar">
     <div class="brand"><span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="#fff" d="M13.2 2 5 13.4h5.6L9.8 22 19 9.9h-5.7L13.2 2z"/></svg></span><span id="brand">Hızlı Kasa</span></div>
-    <nav class="tabs hidden" id="panelTabs">
-      <span class="panel-badge" id="panelBadge"></span>
-      <button data-tab="products" data-role="admin">Ürünler <kbd>F2</kbd></button>
-      <button data-tab="report" data-role="user">Gün Sonu <kbd>F3</kbd></button>
-      <button data-tab="settings" data-role="user">Ayarlar <kbd>F4</kbd></button>
-      <button data-tab="security" data-role="admin">Şifreler <kbd>F5</kbd></button>
+    <nav class="tabs" id="navTabs">
+      <span class="panel-badge" id="panelBadge">Yönetici</span>
+      <button data-tab="sale" data-mode="sale">Satış <kbd>F1</kbd></button>
+      <button data-tab="products" data-mode="admin">Ürünler <kbd>F2</kbd></button>
+      <button data-tab="report" data-mode="both">Gün Sonu <kbd>F3</kbd></button>
+      <button data-tab="settings" data-mode="admin">Ayarlar <kbd>F4</kbd></button>
+      <button data-tab="security" data-mode="admin">Şifre <kbd>F5</kbd></button>
     </nav>
     <span class="grow"></span>
     <button class="update hidden" id="updateBtn"></button>
     <div class="status" id="syncStatus" title="">●</div>
     <div class="clock" id="clock"></div>
-    <button class="hdr-btn" id="btnUserArea" title="Gün sonu ve ayarlar (şifre ister)">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg> Kullanıcı</button>
-    <button class="hdr-btn" id="btnAdmin" title="Yönetici paneli (kullanıcı adı ve şifre ister)">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/></svg> Yönetici</button>
-    <button class="hdr-btn exit hidden" id="btnExitPanel" title="Paneli kilitle ve satışa dön (F1)">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> Kilitle · Satışa dön</button>
+    <button class="hdr-btn" id="btnHome" title="Ana ekrana dön">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/></svg> Ana ekran</button>
+    <button class="hdr-btn exit hidden" id="btnAdminExit" title="Yönetici oturumunu kapat">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 4h4v16h-4"/><path d="M10 8l-4 4 4 4"/><path d="M6 12h11"/></svg> Çıkış</button>
   </header>
 
+  <!-- AÇILIŞ EKRANI -->
+  <main id="tab-home" class="tab hero-screen active">
+    <div class="hero-band"></div>
+    <div class="hero-inner">
+      <div class="hero-brand"><span class="hero-logo"><svg viewBox="0 0 24 24" width="40" height="40"><path fill="#fff" d="M13.2 2 5 13.4h5.6L9.8 22 19 9.9h-5.7L13.2 2z"/></svg></span>
+        <div><div class="hero-title">Hızlı Kasa</div><div class="hero-sub" id="homeStore">SATIŞ SİSTEMİ</div></div></div>
+      <div class="choice-row">
+        <button class="choice primary-choice" id="goSale">
+          <span class="ci-icon"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" stroke-width="2"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.6 12.4a2 2 0 0 0 2 1.6h8.2a2 2 0 0 0 2-1.5L22 7H6"/></svg></span>
+          <span class="ci-t">Satış</span><span class="ci-d">Barkodlu satış ve gün sonu<br>Şifre gerekmez</span><kbd>1</kbd></button>
+        <button class="choice" id="goAdmin">
+          <span class="ci-icon dark"><svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="#ffb28f" stroke-width="2"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/><path d="m9 12 2 2 4-4"/></svg></span>
+          <span class="ci-t">Yönetici girişi</span><span class="ci-d">Ürünler, ayarlar, senkronizasyon<br>Kullanıcı adı ve şifre ister</span><kbd>2</kbd></button>
+      </div>
+      <div class="hero-foot" id="homeFoot"></div>
+    </div>
+  </main>
+
+  <!-- YÖNETİCİ GİRİŞİ -->
+  <main id="tab-login" class="tab hero-screen">
+    <div class="hero-band"></div>
+    <div class="hero-inner">
+      <div class="hero-brand"><span class="hero-logo"><svg viewBox="0 0 24 24" width="40" height="40"><path fill="#fff" d="M13.2 2 5 13.4h5.6L9.8 22 19 9.9h-5.7L13.2 2z"/></svg></span>
+        <div><div class="hero-title">Hızlı Kasa</div><div class="hero-sub">YÖNETİCİ GİRİŞİ</div></div></div>
+      <form class="login-card" id="loginForm" autocomplete="off">
+        <label>Kullanıcı adı<input id="lgU" autocomplete="off" spellcheck="false"></label>
+        <label>Şifre<input id="lgP" type="password" autocomplete="off"></label>
+        <button type="submit" class="primary big">Giriş Yap</button>
+        <button type="button" class="link" id="lgBack">← Ana ekrana dön</button>
+      </form>
+    </div>
+  </main>
+
   <!-- SATIŞ -->
-  <main id="tab-sale" class="tab active">
+  <main id="tab-sale" class="tab">
     <section class="sale-left">
       <div class="scan">
         <input id="scanInput" autocomplete="off" spellcheck="false"
@@ -155,13 +187,6 @@
   <!-- ŞİFRELER (yönetici) -->
   <main id="tab-security" class="tab">
     <div class="settings">
-      <div class="panel">
-        <h3>Kullanıcı şifresi</h3>
-        <p class="hint">Gün sonu ve ayarlara girişte sorulan şifre.</p>
-        <label>Yeni şifre <input type="password" id="secUserNew" autocomplete="new-password"></label>
-        <label>Yeni şifre (tekrar) <input type="password" id="secUserNew2" autocomplete="new-password"></label>
-        <div class="row-btns"><button class="primary" id="btnSecUser">Kullanıcı şifresini değiştir</button></div>
-      </div>
       <div class="panel">
         <h3>Yönetici girişi</h3>
         <p class="hint">Yönetici paneline girişte sorulan kullanıcı adı ve şifre.</p>
