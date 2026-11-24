@@ -2,6 +2,8 @@
 <html lang="tr">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c0c0e">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com;">
   <title>Hızlı Kasa</title>
@@ -47,6 +49,23 @@
     </div>
   </main>
 
+  <!-- WEB: BULUT HESABIYLA GİRİŞ -->
+  <main id="tab-cloud" class="tab hero-screen">
+    <div class="hero-band"></div>
+    <div class="hero-inner">
+      <div class="hero-brand"><span class="hero-logo"><svg viewBox="0 0 24 24" width="40" height="40"><path fill="#fff" d="M13.2 2 5 13.4h5.6L9.8 22 19 9.9h-5.7L13.2 2z"/></svg></span>
+        <div><div class="hero-title">Hızlı Kasa</div><div class="hero-sub">WEB · BULUT GİRİŞİ</div></div></div>
+      <form class="login-card" id="cloudForm" autocomplete="on">
+        <div class="hint">Kasa bilgisayarında kullandığınız bulut (Firebase) hesabıyla giriş yapın. Veriler kasa ile otomatik eşitlenir.</div>
+        <label>Proje ID<input id="cgProject" autocomplete="off" spellcheck="false"></label>
+        <label>Web API anahtarı<input id="cgKey" autocomplete="off" spellcheck="false"></label>
+        <label>E-posta<input id="cgEmail" type="email" autocomplete="username" spellcheck="false"></label>
+        <label>Şifre<input id="cgPass" type="password" autocomplete="current-password"></label>
+        <button type="submit" class="primary big" id="cgGo">Giriş yap</button>
+      </form>
+    </div>
+  </main>
+
   <!-- YÖNETİCİ GİRİŞİ -->
   <main id="tab-login" class="tab hero-screen">
     <div class="hero-band"></div>
@@ -68,6 +87,9 @@
       <div class="scan">
         <input id="scanInput" autocomplete="off" spellcheck="false"
                placeholder="Barkod okutun veya ürün ara  (miktar için: 3*barkod)">
+        <button class="cam-btn" id="btnCam" title="Kamera ile barkod okut" type="button">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M10 8v8M13 8v8M16 8v8"/></svg>
+          <span>Kamera</span></button>
       </div>
       <div class="month-banner hidden" id="monthBanner"></div>
       <div class="order-strip hidden" id="orderStrip"></div>
@@ -80,7 +102,7 @@
       </div>
     </section>
     <aside class="sale-right">
-      <div class="total-box">
+      <div class="total-box" id="cartAnchor">
         <div class="lbl">TOPLAM</div>
         <div class="total" id="cartTotal">0,00 ₺</div>
         <div class="sub" id="cartCount">0 kalem</div>
@@ -225,6 +247,7 @@
   <div id="modalBack" class="modal-back hidden"><div id="modal" class="modal"></div></div>
   <div id="toasts" class="toasts"></div>
 
+  <button class="cart-jump" id="cartJump" type="button"><span id="cjCount">Sepet boş</span><b id="cjTotal">0,00 ₺</b></button>
   <script src="db.js"></script>
   <script src="sync.js"></script>
   <script src="receipt.js"></script>

@@ -128,15 +128,25 @@ const Sync = (() => {
   async function push() {
     const c = await cfg();
     const prefix = `projects/${c.url}/databases/(default)/documents/`;
+    const TS = [{ fieldPath: '_ts', setToServerValue: 'REQUEST_TIME' }];   // sunucu saati: cihaz saatleri farklı olsa da sıralama doğru kalır
     for (;;) {
-      const batch = await DB.outboxBatch(300);
+      const batch = await DB.outboxBatch(200);
       if (!batch.length) break;
       // Aynı kaydın yalnızca son hali gönderilir
       const latest = new Map();
       for (const item of batch) latest.set(item.table + '/' + item.row.id, item);
-      const writes = [...latest].map(([path, item]) => item.op === 'delete'
-        ? { delete: prefix + path }
-        : { update: { name: prefix + path, fields: encFields(item.row) } });
+      const writes = [];
+      for (const [path, item] of latest) {
+        if (item.op === 'delete') {
+          writes.push({ delete: prefix + path });
+          // Silinen kaydı diğer cihazlara bildirmek için iz bırakılır
+          const tid = item.table + '__' + item.row.id;
+          writes.push({ update: { name: prefix + 'tombstones/' + tid, fields: encFields({ id: tid, table: item.table, ref: item.row.id }) }, updateTransforms: TS });
+        } else {
+          const row = { ...item.row }; delete row._ts;
+          writes.push({ update: { name: prefix + path, fields: encFields(row) }, updateTransforms: TS });
+        }
+      }
       await api('POST', ':commit', { writes });   // tek seferde, ya hepsi ya hiçbiri
       await DB.outboxDelete(batch.map(b => b.seq));
       state.pending = await DB.count('outbox');
@@ -159,35 +169,117 @@ const Sync = (() => {
     return out;
   }
 
-  // Buluttaki verileri yerel veritabanına indirir (yeni bilgisayar kurulumu / kurtarma)
-  async function restore() {
-    const products = await fetchAll('products');
-    const sales = await fetchAll('sales');
+  // ---- Buluttan çekme (diğer cihazlardaki değişiklikler) ----
+  async function query(collection, field, op, value, limit = 1000) {
+    const j = await api('POST', ':runQuery', { structuredQuery: {
+      from: [{ collectionId: collection }],
+      where: { fieldFilter: { field: { fieldPath: field }, op, value } }, limit } });
+    const arr = Array.isArray(j) ? j : [];
+    const readTime = (arr.find(x => x.readTime) || {}).readTime || null;
+    const rows = arr.filter(x => x.document).map(x => {
+      const o = decFields(x.document.fields || {});
+      if (!o.id) o.id = x.document.name.split('/').pop();
+      return o;
+    });
+    return { rows, readTime };
+  }
+  const ms = v => { const t = Date.parse(v || ''); return Number.isFinite(t) ? t : 0; };
+  const stamp = r => Math.max(ms(r.updated_at), ms(r.created_at), ms(r.cancelled_at), ms(r.approved_at), ms(r.rejected_at), ms(r.done_at));
+  const iso = v => new Date(v || 0).toISOString();
+  const NORM = {
+    products: p => ({ ...p, price: Number(p.price || 0), stock: Number(p.stock || 0), vat_rate: Number(p.vat_rate || 0),
+      min_stock: Number(p.min_stock || 0), active: p.active !== false, updated_at: iso(p.updated_at) }),
+    sales: s => ({ ...s, created_at: iso(s.created_at), items: s.items || [], sale_no: Number(s.sale_no || 0), total: Number(s.total || 0) }),
+    orders: o => ({ ...o, created_at: iso(o.created_at), items: o.items || [], no: Number(o.no || 0), total: Number(o.total || 0) })
+  };
+
+  // Uzak kayıtları yerel veritabanına uygular; daha yeni olan kazanır
+  async function apply(table, rows, sum) {
+    if (!rows.length) return;
+    const archived = table === 'sales' ? new Set((await DB.all('archives')).map(a => a.month)) : null;
     const ops = [];
-    let maxNo = await DB.getMeta('sale_no', 0);
-    for (const p of products) {
-      const local = await DB.get('products', p.id);
-      const row = {
-        ...p,
-        price: Number(p.price || 0), stock: Number(p.stock || 0), vat_rate: Number(p.vat_rate || 0),
-        min_stock: Number(p.min_stock || 0), active: p.active !== false,
-        updated_at: new Date(p.updated_at || 0).toISOString()
-      };
-      if (!local || Date.parse(row.updated_at) > Date.parse(local.updated_at)) ops.push({ store: 'products', value: row });
+    let maxNo = 0;
+    for (const r of rows) {
+      const row = NORM[table](r); delete row._ts;
+      if (table === 'sales') {
+        if (archived.has(localMonth(row.created_at))) continue;
+        maxNo = Math.max(maxNo, row.sale_no);
+      }
+      if (table === 'orders') maxNo = Math.max(maxNo, row.no);
+      const local = await DB.get(table, row.id);
+      if (local && stamp(row) <= stamp(local)) continue;
+      if (table === 'orders' && local && local.status === row.status) row.notified = local.notified;
+      ops.push({ store: table, value: row });
     }
-    const archived = new Set((await DB.all('archives')).map(a => a.month));
-    for (const s of sales) {
-      if (archived.has(localMonth(s.created_at))) continue;
-      const local = await DB.get('sales', s.id);
-      if (!local) ops.push({ store: 'sales', value: { ...s, created_at: new Date(s.created_at).toISOString(), items: s.items || [] } });
-      if (Number(s.sale_no) > maxNo) maxNo = Number(s.sale_no);
+    const key = table === 'sales' ? 'sale_no' : table === 'orders' ? 'order_no' : null;
+    if (key && maxNo > (await DB.getMeta(key, 0))) ops.push({ store: 'meta', value: { key, value: maxNo } });
+    if (ops.length) await DB.write(ops);
+    sum[table] = (sum[table] || 0) + ops.filter(o => o.store === table).length;
+  }
+  async function applyTombstones(rows, sum) {
+    const ops = [];
+    for (const t of rows) {
+      if (!['products', 'sales', 'orders'].includes(t.table) || !t.ref) continue;
+      if (await DB.get(t.table, t.ref)) { ops.push({ store: t.table, del: t.ref }); sum[t.table] = (sum[t.table] || 0) + 1; }
     }
-    ops.push({ store: 'meta', value: { key: 'sale_no', value: maxNo } });
-    await DB.write(ops);
-    return { products: products.length, sales: sales.length };
+    if (ops.length) await DB.write(ops);
   }
 
-  async function run() {
+  // İlk bağlantıda: tüm ürünler, siparişler, ayarlar ve son 2 ayın satışları
+  async function fullLoad() {
+    const sum = { config: [] };
+    const d = new Date(); const from = new Date(d.getFullYear(), d.getMonth() - 1, 1).toISOString();
+    const sq = await query('sales', 'created_at', 'GREATER_THAN_OR_EQUAL', { stringValue: from }, 5000);
+    await apply('products', await fetchAll('products'), sum);
+    await apply('sales', sq.rows, sum);
+    await apply('orders', await fetchAll('orders'), sum);
+    sum.config = await fetchAll('config');
+    const since = sq.readTime || new Date().toISOString();
+    const pull = {}; Object.keys(PULL_EVERY).forEach(c => { pull[c] = since; });
+    await DB.setMeta('pull_since', pull);
+    sum.full = true;
+    return sum;
+  }
+
+  // Sık değişen tablolar daha sık kontrol edilir (ücretsiz okuma kotası için)
+  const PULL_EVERY = { orders: 8000, sales: 25000, products: 60000, tombstones: 60000, config: 60000 };
+  const lastPull = {};
+  async function pull(force = false) {
+    let since = await DB.getMeta('pull_since', null);
+    if (!since) return fullLoad();
+    const sum = { config: [] };
+    const now = Date.now();
+    for (const c of Object.keys(PULL_EVERY)) {
+      if (!force && lastPull[c] && now - lastPull[c] < PULL_EVERY[c]) continue;
+      const from = new Date(ms(since[c]) - 5000).toISOString();    // küçük örtüşme: kaçırma olmasın
+      const q = await query(c, '_ts', 'GREATER_THAN', { timestampValue: from });
+      lastPull[c] = now;
+      if (c === 'tombstones') await applyTombstones(q.rows, sum);
+      else if (c === 'config') sum.config = q.rows;
+      else await apply(c, q.rows, sum);
+      if (q.readTime) since = { ...since, [c]: q.readTime };
+    }
+    await DB.setMeta('pull_since', since);
+    return sum;
+  }
+  const pullListeners = [];
+  const onPulled = fn => pullListeners.push(fn);
+  const notifyPulled = sum => {
+    if (sum && (sum.full || sum.products || sum.sales || sum.orders || (sum.config && sum.config.length)))
+      pullListeners.forEach(fn => { try { fn(sum); } catch (e) { console.error(e); } });
+  };
+
+  // Elle "Buluttan geri yükle": tam yükleme
+  async function restore() {
+    await DB.setMeta('pull_since', null);
+    const sum = await fullLoad();
+    notifyPulled(sum);
+    return { products: sum.products || 0, sales: sum.sales || 0 };
+  }
+
+  let forcePull = false;
+  async function run(force = false) {
+    if (force) forcePull = true;
     if (running) return;
     running = true;
     try {
@@ -197,6 +289,8 @@ const Sync = (() => {
       if (!navigator.onLine) { state.status = 'cevrimdisi'; return; }
       state.status = 'gonderiliyor'; emit();
       await push();
+      if (!(document.hidden && Sync.isWeb)) notifyPulled(await pull(forcePull));
+      forcePull = false;
       state.status = 'tamam';
       state.lastSync = new Date();
       state.lastError = '';
@@ -213,10 +307,12 @@ const Sync = (() => {
 
   function start() {
     run();
-    setInterval(run, 20000);
+    setInterval(run, 10000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) run(true); });
     window.addEventListener('online', () => setTimeout(run, 1000));
     window.addEventListener('offline', () => { state.status = 'cevrimdisi'; emit(); });
   }
 
-  return { start, run, login, logout, restore, onChange, state, cfg };
+  const Sync = { start, run, login, logout, restore, onChange, onPulled, state, cfg, isWeb: false };
+  return Sync;
 })();

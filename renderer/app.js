@@ -18,6 +18,8 @@
   }
 
   // ---------- Durum ----------
+  const IS_WEB = !!(window.kasa && window.kasa.isWeb);
+  if (IS_WEB) { Sync.isWeb = true; document.body.classList.add('web'); }
   const products = new Map();   // id -> ürün
   const byBarcode = new Map();  // barkod -> id
   let cart = [];
@@ -42,7 +44,7 @@
     settings = { ...DEFAULT_SETTINGS, ...(await DB.getMeta('settings', {})) };
     saleNo = await DB.getMeta('sale_no', 0);
     deviceId = await DB.getMeta('device_id', '');
-    if (!deviceId) { deviceId = 'KASA-' + uuid().slice(0, 8).toUpperCase(); await DB.setMeta('device_id', deviceId); }
+    if (!deviceId) { deviceId = (IS_WEB ? 'WEB-' : 'KASA-') + uuid().slice(0, 8).toUpperCase(); await DB.setMeta('device_id', deviceId); }
     $('#brand').textContent = settings.storeName || 'Hızlı Kasa';
     // Kategorisi olmayan ürünlere addan tahmini kategori ata (bir kez)
     const missing = [...products.values()].filter(p => !p.category);
@@ -168,7 +170,7 @@
   });
 
   function renderHeader() {
-    const full = currentTab === 'home' || currentTab === 'login';
+    const full = currentTab === 'home' || currentTab === 'login' || currentTab === 'cloud';
     $('#topbar').classList.toggle('hidden', full);
     document.body.classList.toggle('no-top', full);
     document.body.classList.toggle('mode-admin', mode === 'admin');
@@ -196,7 +198,10 @@
       a.adminHash = await hashPass(a.salt, p1);
     }
     a.adminUser = name;
-    await DB.setMeta('auth', a);
+    a.updated_at = nowIso();
+    await DB.write([{ store: 'meta', value: { key: 'auth', value: a } }],
+      [{ table: 'config', row: { id: 'auth', salt: a.salt, adminUser: a.adminUser, adminHash: a.adminHash, updated_at: a.updated_at } }]);
+    Sync.run();
     ['#secAdminCur', '#secAdminNew', '#secAdminNew2'].forEach(x => $(x).value = '');
     toast('Yönetici bilgileri kaydedildi', 'ok');
   };
@@ -207,6 +212,7 @@
     renderHeader();
     document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
     document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.id === 'tab-' + t));
+    document.body.classList.toggle('on-sale', t === 'sale');
     if (t === 'sale') { renderChips(); renderTiles(); renderOrderStrip(); focusScan(); }
     if (t === 'approvals') renderApprovals();
     if (t === 'products') { renderProducts(); $('#prodSearch').focus(); }
@@ -214,7 +220,8 @@
     if (t === 'settings') renderSettings();
     if (t === 'security') getAuth().then(a => { $('#secAdminName').value = a.adminUser; });
   }
-  function focusScan() { if (currentTab === 'sale' && !modalOpen()) $('#scanInput').focus(); }
+  const TOUCH = matchMedia('(pointer: coarse)').matches;   // dokunmatik cihazda klavye sürekli açılmasın
+  function focusScan() { if (currentTab === 'sale' && !modalOpen() && !TOUCH) $('#scanInput').focus(); }
 
   // ---------- SATIŞ ----------
   function askPrice(p, qty) {
@@ -274,6 +281,8 @@
     }).join('');
     $('#cartEmpty').classList.toggle('hidden', cart.length > 0);
     $('#cartTotal').textContent = money(cartTotal());
+    $('#cjTotal').textContent = money(cartTotal());
+    $('#cjCount').textContent = cart.length ? `Sepet · ${cart.length} kalem` : 'Sepet boş';
     const pieces = cart.reduce((a, l) => a + (['adet', 'paket', 'koli', 'kavanoz', 'teneke'].includes(l.unit) ? l.qty : 0), 0);
     $('#cartCount').textContent = `${cart.length} kalem${pieces ? ` · ${qtyFmt(pieces)} adet` : ''}`;
     if (flashFirst) $('#cartBody').parentElement.scrollTop = 0;
@@ -615,8 +624,10 @@
       const ord = activeOrder ? await DB.get('orders', activeOrder) : null;
       if (ord) { sale.order_no = ord.no; sale.order_note = ord.note || ''; }
       const ops = [{ store: 'sales', value: sale }, { store: 'meta', value: { key: 'sale_no', value: no } }];
-      if (ord) ops.push({ store: 'orders', value: { ...ord, status: 'done', done_at: ts, sale_id: sale.id, sale_no: no, payment_type: type } });
+      let ordRow = null;
+      if (ord) { ordRow = { ...ord, status: 'done', done_at: ts, updated_at: ts, sale_id: sale.id, sale_no: no, payment_type: type }; ops.push({ store: 'orders', value: ordRow }); }
       const sync = [{ table: 'sales', row: sale }];
+      if (ordRow) sync.push({ table: 'orders', row: ordRow });
       const updated = [];
       await DB.write(ops, sync);
       saleNo = no;
@@ -648,6 +659,12 @@
   const tmShort = iso => new Date(iso).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   const ordTotal = items => r2(items.reduce((a, i) => a + r2(i.price * i.qty), 0));
 
+  async function saveOrder(o) {
+    const row = { ...o, updated_at: nowIso() };
+    const { notified, ...cloud } = row;          // bildirim durumu her cihazın kendine ait
+    await DB.write([{ store: 'orders', value: row }], [{ table: 'orders', row: { ...cloud, notified: false } }]);
+    Sync.run();
+  }
   async function updateApprBadge() {
     const n = (await DB.all('orders')).filter(o => o.status === 'pending').length;
     const b = $('#apprBadge'); b.textContent = n; b.classList.toggle('hidden', !n);
@@ -671,8 +688,9 @@
           return { product_id: l.product_id, barcode: l.barcode, name: l.name, unit: l.unit, vat_rate: l.vat_rate,
             qty: l.qty, req_price: l.price, list_price: p ? p.price : (l.listPrice ?? l.price), price: l.price };
         });
-        const order = { id: uuid(), no, created_at: nowIso(), note, items, total: ordTotal(items), status: 'pending', device: deviceId };
-        try { await DB.write([{ store: 'orders', value: order }, { store: 'meta', value: { key: 'order_no', value: no } }]); }
+        const ts0 = nowIso();
+        const order = { id: uuid(), no, created_at: ts0, updated_at: ts0, note, items, total: ordTotal(items), status: 'pending', device: deviceId };
+        try { await DB.write([{ store: 'orders', value: order }, { store: 'meta', value: { key: 'order_no', value: no } }], [{ table: 'orders', row: order }]); Sync.run(); }
         catch (e) { return toast('Gönderilemedi: ' + e.message, 'err'); }
         closeModal();
         cart = []; renderCart(); renderOrderStrip(); updateApprBadge();
@@ -776,22 +794,22 @@
         if (a === 'ok') {
           const items = read();
           if (items.some(i => !(i.price > 0))) return toast('Tüm ürünlere geçerli bir fiyat girin', 'err');
-          await DB.write([{ store: 'orders', value: { ...o, items, total: ordTotal(items), status: 'approved', approved_at: nowIso(), notified: false } }]);
+          await saveOrder({ ...o, items, total: ordTotal(items), status: 'approved', approved_at: nowIso(), notified: false });
           toast(`Sipariş #${o.no} onaylandı — satış ekranına gönderildi`, 'ok');
         }
         if (a === 'rej') {
           if (!(await confirmBox('Reddet', `Sipariş #${o.no} reddedilsin mi?`, 'Reddet', true))) return;
-          await DB.write([{ store: 'orders', value: { ...o, status: 'rejected', rejected_at: nowIso(), notified: false } }]);
+          await saveOrder({ ...o, status: 'rejected', rejected_at: nowIso(), notified: false });
           toast(`Sipariş #${o.no} reddedildi`, 'warn');
         }
         if (a === 'back') {
           if (activeOrder === o.id) { activeOrder = null; cart = []; renderCart(); }
-          await DB.write([{ store: 'orders', value: { ...o, status: 'pending', approved_at: null, notified: true } }]);
+          await saveOrder({ ...o, status: 'pending', approved_at: null, notified: true });
         }
         if (a === 'del') {
           if (!(await confirmBox('Sil', `Onaylı sipariş #${o.no} silinsin mi?`, 'Sil', true))) return;
           if (activeOrder === o.id) { activeOrder = null; cart = []; renderCart(); }
-          await DB.write([{ store: 'orders', del: o.id }]);
+          await DB.write([{ store: 'orders', del: o.id }], [{ table: 'orders', row: { id: o.id }, op: 'delete' }]); Sync.run();
         }
         renderApprovals();
       });
@@ -1277,6 +1295,7 @@
   }
 
   async function checkMonthly() {
+    if (IS_WEB) { saleLocked = null; return null; }    // aylık arşiv kasa bilgisayarında tutulur
     const st = await monthlyStatus();
     saleLocked = st.overdue[0] || null;
     const b = $('#monthBanner');
@@ -1555,6 +1574,13 @@
       printer: $('#setPrinter').value, paper: $('#setPaper').value, autoPrint: $('#setAutoPrint').checked
     };
     await DB.setMeta('settings', settings);
+    const store = { storeName: settings.storeName, storeAddress: settings.storeAddress, storePhone: settings.storePhone, footer: settings.footer };
+    const prev = await DB.getMeta('cfg_store', null);
+    if (JSON.stringify(prev && prev.value) !== JSON.stringify(store)) {
+      const row = { id: 'store', value: store, updated_at: nowIso() };
+      await DB.write([{ store: 'meta', value: { key: 'cfg_store', value: row } }], [{ table: 'config', row }]);
+      Sync.run();
+    }
     $('#brand').textContent = settings.storeName || 'Hızlı Kasa';
   }
   $('#btnSaveSettings').onclick = async () => { await saveSettings(); toast('Ayarlar kaydedildi', 'ok'); };
@@ -1596,6 +1622,119 @@
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   };
+
+  // ---------- Diğer cihazlardan gelen değişiklikler ----------
+  Sync.onPulled(async sum => {
+    for (const c of sum.config || []) {
+      if (c.id === 'store' && c.value) {
+        const prev = await DB.getMeta('cfg_store', null);
+        if (!prev || Date.parse(c.updated_at) > Date.parse(prev.updated_at)) {
+          settings = { ...settings, ...c.value };
+          await DB.write([{ store: 'meta', value: { key: 'settings', value: settings } }, { store: 'meta', value: { key: 'cfg_store', value: c } }]);
+          $('#brand').textContent = settings.storeName || 'Hızlı Kasa';
+        }
+      }
+      if (c.id === 'auth' && c.adminHash) {
+        const a = await DB.getMeta('auth', null);
+        if (!a || !a.updated_at || Date.parse(c.updated_at) > Date.parse(a.updated_at))
+          await DB.setMeta('auth', { salt: c.salt, adminUser: c.adminUser, adminHash: c.adminHash, updated_at: c.updated_at });
+      }
+    }
+    if (sum.products || sum.full) { await loadAll(); }
+    saleNo = Math.max(saleNo, await DB.getMeta('sale_no', 0));
+    updateApprBadge();
+    if (currentTab === 'sale') { renderChips(); renderTiles(); renderOrderStrip(); }
+    if (currentTab === 'products' && !modalOpen()) renderProducts();
+    if (currentTab === 'report' && sum.sales) renderReport();
+    if (currentTab === 'approvals' && sum.orders && !document.activeElement.matches('input.pi')) renderApprovals();
+  });
+
+  // ---------- Web: bulut hesabıyla giriş ----------
+  function showCloudGate() {
+    const cfg = window.WEB_CONFIG || {};
+    showTab('cloud');
+    $('#cgProject').closest('label').classList.toggle('hidden', !!cfg.projectId);
+    $('#cgKey').closest('label').classList.toggle('hidden', !!cfg.apiKey);
+    setTimeout(() => $('#cgEmail').focus(), 50);
+  }
+  $('#cloudForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const cfg = window.WEB_CONFIG || {};
+    const project = cfg.projectId || $('#cgProject').value, key = cfg.apiKey || $('#cgKey').value;
+    const email = $('#cgEmail').value, pass = $('#cgPass').value;
+    if (!project || !key || !email || !pass) return toast('Tüm alanları doldurun', 'err');
+    const btn = $('#cgGo'); btn.disabled = true; btn.textContent = 'Bağlanılıyor...';
+    try {
+      await Sync.login(project, key, email, pass);
+      btn.textContent = 'Veriler indiriliyor...';
+      const r = await Sync.restore();
+      await loadAll(); await loadPopularity();
+      toast(`${r.products} ürün ve ${r.sales} satış yüklendi`, 'ok');
+      $('#cgPass').value = '';
+      goHome();
+    } catch (err) {
+      toast(err instanceof TypeError ? 'Sunucuya ulaşılamadı, interneti kontrol edin' : err.message, 'err');
+    } finally { btn.disabled = false; btn.textContent = 'Giriş yap'; }
+  });
+
+  // ---------- Kamera ile barkod okuma ----------
+  let camStream = null, camTimer = null, zxReader = null;
+  function stopCamera() {
+    if (camTimer) { clearInterval(camTimer); camTimer = null; }
+    if (zxReader) { try { zxReader.reset(); } catch (_) {} zxReader = null; }
+    if (camStream) { camStream.getTracks().forEach(t => t.stop()); camStream = null; }
+  }
+  async function openCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return toast('Bu cihazda kamera kullanılamıyor', 'err');
+    let lastCode = '', lastAt = 0, count = 0;
+    openModal(`<h2>Kamera ile barkod okut</h2>
+      <div class="cam-box"><video id="camV" playsinline muted></video><div class="cam-line"></div></div>
+      <div class="cam-msg" id="camMsg">Barkodu kırmızı çizginin üzerine getirin</div>
+      <div class="btns"><button class="primary" id="camX">Bitti</button></div>`, async m => {
+      m.classList.add('cam-modal');
+      modalClose = () => { m.classList.remove('cam-modal'); stopCamera(); };
+      m.querySelector('#camX').onclick = closeModal;
+      const video = m.querySelector('#camV');
+      const onCode = code => {
+        code = String(code || '').trim(); if (!code) return;
+        const now = Date.now();
+        if (code === lastCode && now - lastAt < 2000) return;    // aynı barkodu art arda saymasın
+        lastCode = code; lastAt = now;
+        const id = byBarcode.get(code), p = id ? products.get(id) : null;
+        const msg = m.querySelector('#camMsg');
+        const say = (t, ok) => { if (msg) { msg.textContent = t; msg.className = 'cam-msg ' + (ok ? 'ok' : 'bad'); } };
+        if (!p) { beep(false); say('Barkod bulunamadı: ' + code, false); if (navigator.vibrate) navigator.vibrate([40, 40, 40]); return; }
+        if (!p.active) { beep(false); say(`"${p.name}" pasif durumda`, false); return; }
+        if (!(p.price > 0)) { closeModal(); addToCart(p, 1); return; }   // fiyat sorulacak
+        addToCart(p, 1);
+        count++;
+        say(`✓ ${p.name} eklendi · sepette ${cart.length} kalem`, true);
+        if (navigator.vibrate) navigator.vibrate(60);
+      };
+      try {
+        if ('BarcodeDetector' in window) {
+          camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+          video.srcObject = camStream; await video.play();
+          const fmts = await BarcodeDetector.getSupportedFormats().catch(() => []);
+          const det = new BarcodeDetector({ formats: fmts.length ? fmts : ['ean_13', 'ean_8', 'code_128', 'upc_a'] });
+          let busy = false;
+          camTimer = setInterval(async () => {
+            if (busy || video.readyState < 2) return; busy = true;
+            try { const r = await det.detect(video); if (r[0]) onCode(r[0].rawValue); } catch (_) {}
+            busy = false;
+          }, 180);
+        } else if (window.ZXing && ZXing.BrowserMultiFormatReader) {
+          zxReader = new ZXing.BrowserMultiFormatReader();
+          await zxReader.decodeFromConstraints({ video: { facingMode: { ideal: 'environment' } } }, video, (res) => { if (res) onCode(res.getText()); });
+        } else throw new Error('Bu tarayıcı barkod okumayı desteklemiyor');
+      } catch (err) {
+        const msg = m.querySelector('#camMsg');
+        if (msg) { msg.textContent = err.name === 'NotAllowedError' ? 'Kamera izni verilmedi. Tarayıcı ayarlarından kameraya izin verin.' : 'Kamera açılamadı: ' + err.message; msg.className = 'cam-msg bad'; }
+      }
+    });
+  }
+  $('#cartJump').onclick = () => $('#cartAnchor').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('#btnCam').onclick = () => { if (!lockGuard()) openCamera(); };
 
   // ---------- Senkron göstergesi ----------
   Sync.onChange(s => {
@@ -1671,7 +1810,8 @@
       await loadAll();
       await loadPopularity();
       await getAuth();
-      renderChips(); renderCart(); renderLastSale(); updateApprBadge(); goHome();
+      renderChips(); renderCart(); renderLastSale(); updateApprBadge();
+      if (IS_WEB && !(await Sync.cfg()).session) showCloudGate(); else goHome();
       Sync.start();
       checkMonthly();
       setInterval(checkMonthly, 30 * 60 * 1000);
