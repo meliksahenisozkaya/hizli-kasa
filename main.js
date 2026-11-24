@@ -57,12 +57,10 @@ ipcMain.handle('print:html', async (_e, html, opts = {}) => {
     await pw.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
     const deviceName = opts.deviceName || '';
     return await new Promise(resolve => {
-      pw.webContents.print({
-        silent: !!deviceName,
-        deviceName: deviceName || undefined,
-        printBackground: false,
-        margins: { marginType: 'none' }
-      }, (success, reason) => resolve({ success, reason: reason || '' }));
+      const o = opts.a4
+        ? { silent: false, printBackground: true, pageSize: 'A4', margins: { marginType: 'default' } }
+        : { silent: !!deviceName, deviceName: deviceName || undefined, printBackground: false, margins: { marginType: 'none' } };
+      pw.webContents.print(o, (success, reason) => resolve({ success, reason: reason || '' }));
     });
   } finally {
     setTimeout(() => { if (!pw.isDestroyed()) pw.close(); }, 500);
@@ -101,6 +99,15 @@ ipcMain.handle('image:fetch', async (_e, url) => {
   if (!type.startsWith('image/')) throw new Error('Resim değil');
   const buf = Buffer.from(await r.arrayBuffer());
   return 'data:' + type + ';base64,' + buf.toString('base64');
+});
+
+ipcMain.handle('archive:save', async (_e, name, base64) => {
+  const fs = require('fs');
+  const dir = path.join(app.getPath('documents'), 'Hizli Kasa Arsiv');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, String(name).replace(/[^\w.-]/g, '_'));
+  fs.writeFileSync(file, Buffer.from(base64, 'base64'));
+  return file;
 });
 
 ipcMain.handle('app:version', () => app.getVersion());
