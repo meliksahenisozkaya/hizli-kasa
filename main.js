@@ -77,13 +77,13 @@ ipcMain.handle('excel:read', async (_e, bytes) => {
 ipcMain.handle('excel:save', async (_e, rows, name) => {
   const XLSX = require('xlsx');
   const r = await dialog.showSaveDialog(win, {
-    title: 'Örnek Excel dosyasını kaydet',
+    title: 'Excel dosyasını kaydet',
     defaultPath: path.join(app.getPath('downloads'), name || 'ornek.xlsx'),
     filters: [{ name: 'Excel', extensions: ['xlsx'] }]
   });
   if (r.canceled || !r.filePath) return { saved: false };
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [{ wch: 10 }, { wch: 34 }, { wch: 16 }, { wch: 7 }, { wch: 18 }, { wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 10 }];
+  ws['!cols'] = [{ wch: 10 }, { wch: 40 }, { wch: 16 }, { wch: 7 }, { wch: 18 }, { wch: 14 }, { wch: 8 }, { wch: 18 }, { wch: 38 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Fiyat Listesi');
   XLSX.writeFile(wb, r.filePath);
