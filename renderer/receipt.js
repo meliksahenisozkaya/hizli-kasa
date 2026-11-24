@@ -62,12 +62,13 @@ const Receipt = (() => {
     const block = (title, type, sum) => {
       const list = ok.filter(s => s.payment_type === type);
       return `<div class="b">${title} (${list.length})</div>
-        ${list.length ? `<table class="small">${list.map(s => `<tr><td>${tm(s.created_at)}</td><td>#${s.sale_no}</td><td class="r">${tl(s.total)}</td></tr>`).join('')}</table>`
+        ${list.length ? `<table class="small">${list.map(s => `<tr class="b"><td>${tm(s.created_at)}  #${s.sale_no}</td><td class="r">${tl(s.total)}</td></tr>`
+          + (s.items || []).map(i => `<tr><td colspan="2">&nbsp;&nbsp;${esc(i.name)}</td></tr>
+            <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;${qtyFmt(i.qty)} ${esc(i.unit || '')} x ${tl(i.price)}</td><td class="r">${tl(i.total)}</td></tr>`).join('')
+          + `<tr><td colspan="2" style="height:5px"></td></tr>`).join('')}</table>`
           : '<div class="small">Satış yok</div>'}
         <div class="row b"><span>${title} toplamı</span><span>${tl(sum)}</span></div><hr>`;
     };
-    const top = r.top.slice(0, 15).map(t =>
-      `<tr><td>${esc(t.name)}</td><td class="r">${qtyFmt(t.qty)}</td><td class="r">${tl(t.total)}</td></tr>`).join('');
     return shell(settings, `
       ${header(settings)}
       <div class="c b">GÜN SONU RAPORU</div>
@@ -80,7 +81,6 @@ const Receipt = (() => {
       <div class="row"><span>Satış adedi</span><span>${r.count}</span></div>
       <hr><div class="row big"><span>TOPLAM</span><span>${tl(r.total)} ₺</span></div><hr>
       ${r.cancelled ? `<div class="row small"><span>İptal edilen (${r.cancelled})</span><span>${tl(r.cancelledTotal)}</span></div><hr>` : ''}
-      ${top ? `<div class="b">En çok satanlar</div><table class="small">${top}</table><hr>` : ''}
       <br>&nbsp;`);
   }
 
