@@ -252,7 +252,7 @@
           <button class="qbtn minus" data-a="dec" title="Bir azalt">−</button>
           <span class="qty" data-a="edit" title="Miktarı değiştir">${qtyFmt(l.qty)}</span>
           <button class="qbtn" data-a="inc" title="Bir artır">+</button>
-          <span class="up">${esc(l.unit || '')} × ${money(l.price)}${warn}</span>
+          <span class="up">${esc(l.unit || '')} × <span class="pr ${l.listPrice != null && l.listPrice !== l.price ? 'chg' : ''}" data-a="price" title="Bu satış için fiyatı değiştir">${money(l.price)} ✎</span>${l.listPrice != null && l.listPrice !== l.price ? ` <s>${money(l.listPrice)}</s>` : ''}${warn}</span>
           <button class="rm" data-a="rm" title="Sepetten çıkar">✕ Çıkar</button>
         </div></div>`;
     }).join('');
@@ -272,6 +272,7 @@
     if (a === 'dec') { l.qty = r3(l.qty - 1); if (l.qty <= 0) cart.splice(i, 1); }
     if (a === 'rm') cart.splice(i, 1);
     if (a === 'edit') return editQty(l);
+    if (a === 'price') return editLinePrice(l);
     renderCart(); focusScan();
   });
 
@@ -381,6 +382,26 @@
       m.querySelector('#aqO').onclick = ok;
       m.querySelector('#aqC').onclick = closeModal;
       m.querySelector('#aq').onkeydown = e => { if (e.key === 'Enter') ok(); };
+    });
+  }
+
+  function editLinePrice(l) {
+    const list = l.listPrice != null ? l.listPrice : l.price;
+    openModal(`<h2>Fiyatı değiştir</h2><div><b>${esc(l.name)}</b></div>
+      <div class="hint">Yalnızca bu satış için geçerlidir; ürünün kayıtlı fiyatı (${money(list)}) değişmez.</div>
+      <label>Birim fiyatı (KDV dahil ₺ / ${esc(l.unit || 'adet')})<input id="lpP" inputmode="decimal" value="${String(l.price).replace('.', ',')}" autofocus></label>
+      <div class="btns">${l.listPrice != null && l.listPrice !== l.price ? '<button class="ghost" id="lpR">Liste fiyatına dön</button>' : ''}<span class="grow"></span>
+        <button class="ghost" id="lpC">Vazgeç</button><button class="primary" id="lpO">Uygula</button></div>`, m => {
+      const ok = () => {
+        const v = r2(parseNum(m.querySelector('#lpP').value));
+        if (!(v >= 0)) return toast('Geçerli bir fiyat girin', 'err');
+        if (l.listPrice == null) l.listPrice = l.price;
+        l.price = v; closeModal(); renderCart();
+      };
+      m.querySelector('#lpO').onclick = ok;
+      m.querySelector('#lpC').onclick = closeModal;
+      const r = m.querySelector('#lpR'); if (r) r.onclick = () => { l.price = l.listPrice; closeModal(); renderCart(); };
+      m.querySelector('#lpP').onkeydown = e => { if (e.key === 'Enter') ok(); };
     });
   }
 

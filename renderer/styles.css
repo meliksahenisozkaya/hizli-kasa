@@ -416,3 +416,10 @@ body.mode-admin #navTabs .panel-badge { display: inline-block; }
 .cards.mini { grid-template-columns: repeat(5, 1fr); } .cards.mini .v { font-size: 20px; }
 .two-col { display: grid; grid-template-columns: 3fr 2fr; gap: 10px; }
 .two-col .preview { max-height: 46vh; }
+
+.cart-list .pr { cursor: pointer; border-bottom: 1px dashed var(--line2); color: var(--text); }
+.cart-list .pr:hover { color: #ffb28f; border-color: var(--accent); }
+.cart-list .pr.chg { color: #ffb28f; font-weight: 700; }
+.cart-list s { color: var(--dim); }
+.cart-list .row2 .up { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cart-list .rm { white-space: nowrap; flex: none; }
