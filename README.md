@@ -16,11 +16,11 @@ Barkod okut → Nakit (F8) / Kart (F9) → fiş. İnternet yokken de çalışır
 - 58 / 80 mm termal yazıcıdan fiş (yazıcı seçilirse soru sormadan basar)
 - Çevrimdışı çalışma + otomatik bulut senkronu + buluttan geri yükleme + JSON yedek
 
-## Giriş ve yetkiler
-- Açılışta yalnızca **satış ekranı** görünür.
-- **Kullanıcı** (sadece şifre): Gün sonu ve Ayarlar. Varsayılan şifre: `1234`
-- **Yönetici** (kullanıcı adı + şifre): Ürünler, Gün sonu, Ayarlar ve Şifreler. Varsayılan: `admin` / `1234`
-- Şifreler yönetici panelindeki **Şifreler (F5)** sekmesinden değiştirilir. **Kilitle · Satışa dön** (F1) paneli kapatır.
+## Açılış ekranı ve yetkiler
+- Program açılışta iki seçenek sunar: **1 · Satış** (şifresiz; satış ve gün sonu) ve **2 · Yönetici girişi**.
+- **Yönetici** (kullanıcı adı + şifre): Ürünler, Gün sonu, Ayarlar/senkronizasyon ve Şifre. Varsayılan: `admin` / `1234`
+- Şifre, yönetici panelindeki **Şifre (F5)** sekmesinden değiştirilir.
+- **Nakit / Kart** seçilince "Ödeme onayı bekleniyor" penceresi açılır; ödeme müşteriden alınınca **Ödemeyi aldım, onaylıyorum** ile satış tamamlanır.
 
 ## Kısayollar
 | Tuş | İşlev |
