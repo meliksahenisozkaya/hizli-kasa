@@ -1106,12 +1106,14 @@
     const arch = (await DB.all('archives')).sort((a, b) => b.month.localeCompare(a.month));
     openModal(`<h2>Aylık rapor &amp; arşiv</h2>
       <div class="hint">Biten her ayın tüm satışları A4 olarak yazdırılır; yazdırma tamamlanınca o ayın verileri sıkıştırılıp arşive alınır ve dosya olarak da saklanır
-      (Belgeler › Hizli Kasa Arsiv). Arşivlenen ayları aşağıdan açıp görebilirsiniz. Ay bitmeden rapor alınamaz.</div>
+      (Belgeler › Hizli Kasa Arsiv). Arşivlenen ayları aşağıdan açıp görebilirsiniz. ${role === 'admin' ? 'Yönetici devam eden ayın ara raporunu her zaman alabilir.' : 'Ay bitmeden rapor alınamaz.'}</div>
       <h3 class="mh">Raporu alınacak aylar</h3>
       <div class="mlist">
         ${st.pending.map(m => `<div class="mrow ${st.overdue.includes(m) ? 'late' : ''}"><div><b>${ymLabel(m)}</b><span>Son gün: ${ymDeadline(m).toLocaleDateString('tr-TR')}${st.overdue.includes(m) ? ' · GECİKTİ, satış kilitli' : ''}</span></div>
           <button class="primary" data-arch="${m}">🖨 A4 çıktı al ve arşivle</button></div>`).join('')}
-        <div class="mrow off"><div><b>${ymLabel(st.cur)}</b><span>Ay devam ediyor — ay bitmeden çıktı alınamaz</span></div><button disabled>A4 çıktı al</button></div>
+        ${role === 'admin'
+          ? `<div class="mrow"><div><b>${ymLabel(st.cur)}</b><span>Ay devam ediyor — yönetici ara rapor alabilir (arşivleme ay bitince yapılır)</span></div><button class="primary" data-cur="${st.cur}">🖨 A4 ara rapor al</button></div>`
+          : `<div class="mrow off"><div><b>${ymLabel(st.cur)}</b><span>Ay devam ediyor — ay bitmeden çıktı alınamaz</span></div><button disabled>A4 çıktı al</button></div>`}
       </div>
       <h3 class="mh">Arşiv</h3>
       <div class="mlist">${arch.length ? arch.map(a => `<div class="mrow"><div><b>${ymLabel(a.month)}</b>
@@ -1128,6 +1130,14 @@
         await archiveMonth(ym); openMonthly();
       });
       m.querySelectorAll('[data-view]').forEach(b => b.onclick = () => viewArchive(b.dataset.view));
+      m.querySelectorAll('[data-cur]').forEach(b => b.onclick = async () => {
+        if (role !== 'admin') return;
+        const ym = b.dataset.cur;
+        const sales = await salesOfMonth(ym);
+        if (!sales.length) return toast('Bu ay henüz satış yok', 'warn');
+        const d = monthData(ym, sales); d.label += ' (ara rapor — ' + new Date().toLocaleDateString('tr-TR') + ' itibarıyla)';
+        await printA4(Receipt.monthA4(d, settings));
+      });
       m.querySelectorAll('[data-reprint]').forEach(b => b.onclick = async () => {
         const a = await DB.get('archives', b.dataset.reprint);
         const data = await gunzipB64(a.gz);
