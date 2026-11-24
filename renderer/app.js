@@ -57,6 +57,15 @@
     }
   }
   const catOf = p => p.category || Importer.guessCategory(p.name);
+  const subOf = p => p.subgroup || Importer.guessSubgroup(p.name, catOf(p)) || '';
+  function subsOf(cat) {
+    const set = new Set([...products.values()].filter(p => p.active && catOf(p) === cat).map(subOf));
+    const order = Importer.subgroupOrder(cat);
+    return [...set].sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, 'tr');
+    });
+  }
   function allCategories() {
     const set = new Set([...products.values()].filter(p => p.active).map(catOf));
     const known = Importer.CATEGORIES.filter(c => set.has(c));
@@ -339,44 +348,97 @@
     } finally { photoBusy = false; }
   }
 
+  let activeSub = '';
+  const CAT_ICON = { 'Fındık Ezmesi': '🫙', 'Krokan & Çikolata': '🍫', 'Kıyılmış & Un': '🥣', 'Kavrulmuş İç': '🔥', 'Natürel İç': '🌰', 'Kabuklu & Çıtlama': '🥜', 'Diğer': '📦' };
   function renderChips() {
     const cats = allCategories();
-    if (activeGroup && !cats.includes(activeGroup)) activeGroup = '';
+    if (activeGroup && activeGroup !== '*' && !cats.includes(activeGroup)) { activeGroup = ''; activeSub = ''; }
     const count = c => [...products.values()].filter(p => p.active && catOf(p) === c).length;
-    $('#groupChips').innerHTML = cats.length ? ['', ...cats].map(g =>
-      `<button data-g="${esc(g)}" class="${g === activeGroup ? 'on' : ''}">${g ? `${esc(g)} <span class="cnt">${count(g)}</span>` : 'Tümü'}</button>`).join('') : '';
+    const searching = !!$('#scanInput').value.trim();
+    $('#groupChips').innerHTML = cats.map(g =>
+      `<button data-g="${esc(g)}" class="${g === activeGroup && !searching ? 'on' : ''}"><span class="ic">${CAT_ICON[g] || '🏷️'}</span><span class="nm">${esc(g)}</span><span class="cnt">${count(g)}</span></button>`).join('')
+      + (cats.length ? `<button data-g="*" class="all ${activeGroup === '*' && !searching ? 'on' : ''}"><span class="ic">☰</span><span class="nm">Tüm ürünler</span><span class="cnt">${[...products.values()].filter(p => p.active).length}</span></button>` : '');
   }
   $('#groupChips').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    activeGroup = b.dataset.g; renderChips(); renderTiles(); focusScan();
+    activeGroup = b.dataset.g; activeSub = '';
+    if ($('#scanInput').value.trim()) $('#scanInput').value = '';
+    renderChips(); renderTiles(); focusScan();
   });
 
-  function renderTiles() {
-    const raw = $('#scanInput').value.trim().replace(/^\d+(?:[.,]\d+)?\s*[*xX]\s*/, '');
-    const q = lower(raw);
-    const inCart = new Map(cart.map(l => [l.product_id, l.qty]));
-    let list = [...products.values()].filter(p => p.active && (!activeGroup || catOf(p) === activeGroup))
-      .filter(p => !q || lower(p.name).includes(q) || (p.barcode || '').includes(raw) || (p.code || '') === raw);
-    list.sort((a, b) => (popularity.get(b.id) || 0) - (popularity.get(a.id) || 0) || a.name.localeCompare(b.name, 'tr'));
-    const total = list.length;
-    list = list.slice(0, 240);
-    $('#tiles').innerHTML = list.map(p => {
-      const c = inCart.get(p.id);
-      return `<button class="tile ${c ? 'in' : ''}" data-id="${p.id}" title="${esc(p.name)}">
+  function tileHtml(p, inCart) {
+    const c = inCart.get(p.id);
+    return `<button class="tile ${c ? 'in' : ''}" data-id="${p.id}" title="${esc(p.name)}">
         <span class="ph">${p.image ? `<img src="${p.image}" alt="" loading="lazy">` : `<span class="ph-x">${esc(initials(p.name))}</span>`}</span>
         ${c ? `<span class="badge">${qtyFmt(c)} ${esc(p.unit)}</span>` : ''}
         <span class="n">${esc(p.name)}</span>
         <span class="f"><span class="p ${p.price > 0 ? '' : 'none'}">${p.price > 0 ? money(p.price) : 'Fiyat yok'}</span>
         <span class="s">${esc(p.unit)}</span></span></button>`;
-    }).join('') + (total > 240 ? `<div class="none">${total - 240} ürün daha var — aramayı daraltın</div>` : '')
-      || `<div class="none">${products.size ? 'Eşleşen ürün yok' : 'Henüz ürün yok — Ürünler (F2) ekranından ekleyin'}</div>`;
   }
+
+  function renderTiles() {
+    const raw = $('#scanInput').value.trim().replace(/^\d+(?:[.,]\d+)?\s*[*xX]\s*/, '');
+    const q = lower(raw);
+    const inCart = new Map(cart.map(l => [l.product_id, l.qty]));
+    const tiles = $('#tiles'), crumb = $('#crumb');
+    const sortP = list => list.sort((a, b) => (popularity.get(b.id) || 0) - (popularity.get(a.id) || 0) || a.name.localeCompare(b.name, 'tr'));
+    const active = [...products.values()].filter(p => p.active);
+    tiles.classList.remove('subs');
+    if (!products.size) { crumb.innerHTML = ''; tiles.innerHTML = '<div class="none">Henüz ürün yok — yönetici girişinden ürün ekleyin</div>'; return; }
+
+    // Arama: tüm gruplarda
+    if (q) {
+      let list = sortP(active.filter(p => lower(p.name).includes(q) || (p.barcode || '').includes(raw) || (p.code || '') === raw));
+      const total = list.length; list = list.slice(0, 240);
+      crumb.innerHTML = `<span class="cur">🔎 Arama: “${esc(raw)}”</span><span class="cnt">${total} ürün</span>`;
+      tiles.innerHTML = list.map(p => tileHtml(p, inCart)).join('') || '<div class="none">Eşleşen ürün yok</div>';
+      return;
+    }
+    // Başlangıç: grup seçilmedi
+    if (!activeGroup) {
+      crumb.innerHTML = '';
+      tiles.innerHTML = `<div class="pick-hint"><div class="arrow">←</div><b>Soldan bir grup seçin</b><span>veya barkod okutun / ürün adı yazın</span></div>`;
+      return;
+    }
+    if (activeGroup === '*') {
+      crumb.innerHTML = `<span class="cur">Tüm ürünler</span>`;
+      tiles.innerHTML = sortP(active).slice(0, 400).map(p => tileHtml(p, inCart)).join('');
+      return;
+    }
+    const inCat = active.filter(p => catOf(p) === activeGroup);
+    const subs = subsOf(activeGroup);
+    if (activeSub && !subs.includes(activeSub)) activeSub = '';
+    // Alt grup seçimi (birden fazla alt grup varsa)
+    if (subs.length > 1 && !activeSub) {
+      crumb.innerHTML = `<span class="cur">${CAT_ICON[activeGroup] || ''} ${esc(activeGroup)}</span><span class="cnt">Alt grup seçin</span>`;
+      tiles.classList.add('subs');
+      tiles.innerHTML = subs.map(sg => {
+        const list = sortP(inCat.filter(p => subOf(p) === sg));
+        const withImg = list.find(p => p.image);
+        const inC = list.reduce((a, p) => a + (inCart.has(p.id) ? 1 : 0), 0);
+        return `<button class="sub-card ${inC ? 'in' : ''}" data-sub="${esc(sg)}">
+          <span class="ph">${withImg ? `<img src="${withImg.image}" alt="">` : `<span class="ph-x">${esc(initials(sg))}</span>`}</span>
+          <span class="t">${esc(sg || 'Diğer')}</span><span class="c">${list.length} ürün${inC ? ` · ${inC} sepette` : ''}</span></button>`;
+      }).join('');
+      return;
+    }
+    const list = sortP(inCat.filter(p => subs.length <= 1 || subOf(p) === activeSub));
+    crumb.innerHTML = subs.length > 1
+      ? `<button class="back" data-back="1">‹ Geri</button><span class="lnk" data-back="1">${esc(activeGroup)}</span><span class="sep">›</span><span class="cur">${esc(activeSub || 'Diğer')}</span><span class="cnt">${list.length} ürün</span>`
+      : `<span class="cur">${CAT_ICON[activeGroup] || ''} ${esc(activeGroup)}</span><span class="cnt">${list.length} ürün</span>`;
+    tiles.innerHTML = list.map(p => tileHtml(p, inCart)).join('') || '<div class="none">Bu grupta ürün yok</div>';
+  }
+  $('#crumb').addEventListener('click', e => {
+    if (e.target.closest('[data-back]')) { activeSub = ''; renderTiles(); focusScan(); }
+  });
   $('#tiles').addEventListener('click', e => {
+    const sc = e.target.closest('.sub-card');
+    if (sc) { activeSub = sc.dataset.sub; renderTiles(); focusScan(); return; }
     const t = e.target.closest('.tile'); if (!t) return;
     const p = products.get(t.dataset.id); if (!p) return;
     if (WEIGHED.includes(p.unit)) askQty(p); else { addToCart(p, 1); focusScan(); }
   });
-  $('#scanInput').addEventListener('input', () => renderTiles());
+  $('#scanInput').addEventListener('input', () => { renderChips(); renderTiles(); });
 
   function askQty(p) {
     openModal(`<h2>${esc(p.name)}</h2>
@@ -778,6 +840,8 @@
         <label>Stok kodu (isteğe bağlı)<input id="fCode" value="${esc(v.code || '')}"></label>
         <label>Kategori (satış ekranı)<input id="fCat" list="catList" value="${esc(v.category || (v.name ? Importer.guessCategory(v.name) : ''))}" placeholder="ör. Fındık Ezmesi"></label>
       </div>
+      <label>Alt grup (boş bırakılırsa addan otomatik)<input id="fSub" list="subList" value="${esc(v.subgroup || '')}" placeholder="${esc(v.name ? Importer.guessSubgroup(v.name, v.category || Importer.guessCategory(v.name)) || 'ör. Şekersiz Ezme' : 'ör. Şekersiz Ezme')}">
+        <datalist id="subList">${[...new Set([...products.values()].map(subOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'tr')).map(x => `<option value="${esc(x)}">`).join('')}</datalist></label>
       <div class="two">
         <label>Satış fiyatı (KDV dahil ₺)<input id="fPrice" inputmode="decimal" value="${v.price === '' ? '' : String(v.price).replace('.', ',')}"></label>
         <label>KDV %<select id="fVat">${[0, 1, 10, 20].map(r => `<option ${Number(v.vat_rate) === r ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
@@ -820,6 +884,7 @@
           id: p ? p.id : uuid(), barcode: barcode || null, name, price: r2(price),
           code: code || null, group: v.group || null,
           category: m.querySelector('#fCat').value.trim() || Importer.guessCategory(name),
+          subgroup: m.querySelector('#fSub').value.trim() || null,
           image: image || null, noPhoto: !image && !!v.image ? true : (image ? false : !!v.noPhoto),
           stock: r3(stock), vat_rate: Number(m.querySelector('#fVat').value), unit: m.querySelector('#fUnit').value,
           min_stock: r3(min), active: p ? p.active : true, updated_at: ts
@@ -1048,8 +1113,8 @@
         if (!list.length) return toast('Henüz ürün yok', 'warn');
         const rows = [
           ['GÜNCEL ÜRÜN LİSTESİ · ' + (settings.storeName || 'Hızlı Kasa') + ' · ' + new Date().toLocaleString('tr-TR')],
-          ['Stok Kodu', 'Stok Adı', 'BARKOD', 'KDV %', 'PERAKENDE FİYATI', 'KDV dahil mi?', 'Birimi', 'Kategori', 'Ürün ID'],
-          ...list.map(p => [p.code || '', p.name, p.barcode || '', Number(p.vat_rate) || 0, Number(p.price) || 0, 'EVET', (p.unit || 'adet').toLocaleUpperCase('tr-TR'), catOf(p), p.id])
+          ['Stok Kodu', 'Stok Adı', 'BARKOD', 'KDV %', 'PERAKENDE FİYATI', 'KDV dahil mi?', 'Birimi', 'Kategori', 'Alt Grup', 'Ürün ID'],
+          ...list.map(p => [p.code || '', p.name, p.barcode || '', Number(p.vat_rate) || 0, Number(p.price) || 0, 'EVET', (p.unit || 'adet').toLocaleUpperCase('tr-TR'), catOf(p), p.subgroup || '', p.id])
         ];
         const name = 'urun-listesi-' + new Date().toISOString().slice(0, 10) + '.xlsx';
         try {
@@ -1109,7 +1174,7 @@
     const exclVat = items.some(it => it.vatIncl === false && Number.isFinite(it.price));
     const salePrice = (it, addVat) => !Number.isFinite(it.price) ? NaN
       : r2(addVat && it.vatIncl === false && it.vat > 0 ? it.price * (1 + it.vat / 100) : it.price);
-    const COLS = { code: 'Stok kodu', name: 'Ürün adı', extra: 'Özel kod', group: 'Grup', unit: 'Birim', barcode: 'Barkod', stock: 'Stok', price: 'Fiyat', vat: 'KDV %', vatIncl: 'KDV dahil mi', category: 'Kategori', id: 'Ürün ID' };
+    const COLS = { code: 'Stok kodu', name: 'Ürün adı', extra: 'Özel kod', group: 'Grup', unit: 'Birim', barcode: 'Barkod', stock: 'Stok', price: 'Fiyat', vat: 'KDV %', vatIncl: 'KDV dahil mi', category: 'Kategori', subgroup: 'Alt grup', id: 'Ürün ID' };
     const previewRows = addVat => items.slice(0, 60).map(it => {
       const old = findOld(it);
       return `<tr><td>${old ? '<span style="color:var(--muted)">güncelle</span>' : '<span style="color:var(--accent2)">yeni</span>'}</td>
@@ -1160,13 +1225,13 @@
       const row = old ? {
         ...old,
         name: keepName ? old.name : it.name,
-        code: it.code || old.code || null, group: it.group || old.group || null, category: it.category || old.category || null,
+        code: it.code || old.code || null, group: it.group || old.group || null, category: it.category || old.category || null, subgroup: it.subgroup || old.subgroup || null,
         barcode: barcode || old.barcode || null, unit: it.unit || old.unit,
         price: Number.isFinite(it.price) ? r2(it.price) : old.price,
         vat_rate: Number.isFinite(it.vat) ? it.vat : old.vat_rate,
         active: true, updated_at: ts
       } : {
-        id: uuid(), code: it.code || null, barcode, name: it.name, group: it.group || null, category: it.category || Importer.guessCategory(it.name),
+        id: uuid(), code: it.code || null, barcode, name: it.name, group: it.group || null, category: it.category || Importer.guessCategory(it.name), subgroup: it.subgroup || null,
         price: Number.isFinite(it.price) ? r2(it.price) : 0, stock: 0,
         vat_rate: Number.isFinite(it.vat) ? it.vat : 10, unit: it.unit || 'adet', min_stock: 0, active: true, updated_at: ts
       };

@@ -39,6 +39,7 @@ const Importer = (() => {
     if (n === 'kodu' || n === 'kod' || n === 'stok kodu' || n === 'urun kodu') return 'code';
     if (n.includes('urun adi') || n.includes('stok adi') || n === 'adi' || n === 'urun' || n === 'aciklama') return 'name';
     if (n === 'urun id' || n === 'id' || n === 'kayit id') return 'id';
+    if (n.includes('alt grup') || n.includes('alt kategori')) return 'subgroup';
     if (n.includes('kategori')) return 'category';
     if (n.includes('gurub') || n.includes('grub') || n === 'grup') return 'group';
     if (n.includes('birim') && !n.includes('fiyat')) return 'unit';
@@ -81,7 +82,7 @@ const Importer = (() => {
         const barcode = text(get(r, 'barcode')).replace(/\s/g, '');
         const extra = text(get(r, 'extra'));
         items.push({
-          id: text(get(r, 'id')), category: text(get(r, 'category')),
+          id: text(get(r, 'id')), category: text(get(r, 'category')), subgroup: text(get(r, 'subgroup')),
           code, barcode,
           name: extra && !norm(name).includes(norm(extra)) ? `${name} (${extra})` : name,
           unit: unitOf(get(r, 'unit')),
@@ -128,6 +129,23 @@ const Importer = (() => {
     return 'Diğer';
   }
 
-  return { parse, csvRows, fixTr, norm, guessCategory, CATEGORIES };
+  // Satış ekranında ana gruptan sonra gösterilen alt gruplar (sıra = ekrandaki sıra)
+  const SUBGROUPS = {
+    'Fındık Ezmesi': [['Şekerli Ezme', null], ['Şekersiz Ezme', /sekersiz/], ['Fındık Püresi', /pure/], ['Kremalar', /krema/]],
+    'Krokan & Çikolata': [['Krokan', null], ['Çikolatalı Krokan', /krokan.*cikolata|cikolata.*krokan/], ['Çikolata', /cikolata|finci|special/]],
+    'Kıyılmış & Un': [['Kıyılmış', null], ['Fındık Unu', /\bun\b|unu\b/]],
+    'Kavrulmuş İç': [['Çifte Kavrulmuş', null], ['Pikola', /pikola/], ['Beyazlatma', /beyaz/], ['Tuzlu', /tuzlu|zarli/]],
+    'Kabuklu & Çıtlama': [['Kabuklu', null], ['Çıtlama', /citlama/]]
+  };
+  function guessSubgroup(name, cat) {
+    const rules = SUBGROUPS[cat]; if (!rules) return '';
+    const n = norm(name);
+    // özel kurallar sırayla denenir, hiçbiri tutmazsa varsayılan (null) alt grup
+    for (const [g, re] of rules) if (re && re.test(n)) return g;
+    return rules.find(r => !r[1])[0];
+  }
+  const subgroupOrder = cat => (SUBGROUPS[cat] || []).map(r => r[0]);
+
+  return { parse, csvRows, fixTr, norm, guessCategory, guessSubgroup, subgroupOrder, CATEGORIES };
 })();
 if (typeof module !== 'undefined') module.exports = Importer;
