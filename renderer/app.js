@@ -809,6 +809,28 @@
       (s.lastSync ? `\nSon senkron: ${s.lastSync.toLocaleString('tr-TR')}` : '') + (s.lastError ? `\nHata: ${s.lastError}` : '');
   });
 
+  // ---------- Otomatik güncelleme ----------
+  if (window.kasa && window.kasa.onUpdate) {
+    const btn = $('#updateBtn');
+    window.kasa.onUpdate(u => {
+      btn.classList.remove('hidden');
+      if (u.state === 'downloading') {
+        btn.className = 'update busy'; btn.disabled = true;
+        btn.textContent = `Yeni sürüm ${u.version} indiriliyor...`;
+      } else if (u.state === 'ready') {
+        btn.className = 'update'; btn.disabled = false;
+        btn.textContent = `⟳ Sürüm ${u.version} hazır — yeniden başlat`;
+        btn.title = 'Tıklamazsanız program kapatıldığında otomatik kurulur.';
+        toast(`Yeni sürüm ${u.version} indirildi. Uygun bir anda üstteki yeşil düğmeye basın.`, 'ok');
+        btn.onclick = async () => {
+          if (cart.length && !(await confirmBox('Güncelleme', 'Sepette ürün var. Yeniden başlatılırsa sepet boşalır. Devam edilsin mi?', 'Yeniden başlat', true))) return;
+          btn.textContent = 'Kuruluyor...'; btn.disabled = true;
+          window.kasa.installUpdate();
+        };
+      }
+    });
+  }
+
   // ---------- Klavye kısayolları ----------
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && modalOpen()) { e.preventDefault(); closeModal(); return; }
