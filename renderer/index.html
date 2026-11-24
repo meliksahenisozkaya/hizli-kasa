@@ -13,6 +13,7 @@
     <nav class="tabs" id="navTabs">
       <span class="panel-badge" id="panelBadge">Yönetici</span>
       <button data-tab="sale" data-mode="sale">Satış <kbd>F1</kbd></button>
+      <button data-tab="approvals" data-mode="admin">Onaylar <span class="nbadge hidden" id="apprBadge">0</span> <kbd>F6</kbd></button>
       <button data-tab="products" data-mode="admin">Ürünler <kbd>F2</kbd></button>
       <button data-tab="report" data-mode="both">Gün Sonu <kbd>F3</kbd></button>
       <button data-tab="settings" data-mode="admin">Ayarlar <kbd>F4</kbd></button>
@@ -69,6 +70,7 @@
                placeholder="Barkod okutun veya ürün ara  (miktar için: 3*barkod)">
       </div>
       <div class="month-banner hidden" id="monthBanner"></div>
+      <div class="order-strip hidden" id="orderStrip"></div>
       <div class="chips" id="groupChips"></div>
       <div class="tiles" id="tiles"></div>
     </section>
@@ -86,6 +88,7 @@
         <button class="pay cash" id="btnCash">NAKİT <kbd>F8</kbd></button>
         <button class="pay card" id="btnCard">KART / POS <kbd>F9</kbd></button>
       </div>
+      <button class="send-appr" id="btnSendAppr">⏳ ONAYA GÖNDER <kbd>F7</kbd></button>
       <button class="ghost" id="btnClear">Sepeti temizle</button>
       <div class="last-sale" id="lastSale"></div>
     </aside>
@@ -113,6 +116,15 @@
       </table>
     </div>
     <div class="foot" id="prodFoot"></div>
+  </main>
+
+  <!-- ONAY BEKLEYEN İŞLEMLER -->
+  <main id="tab-approvals" class="tab">
+    <div class="toolbar"><h2 style="margin:0">Onay bekleyen işlemler</h2><span class="grow"></span>
+      <span class="hint">Fiyatları düzenleyip onaylayın. Onaylanan sipariş satış ekranına bildirim olarak düşer.</span></div>
+    <div class="appr-list" id="apprList"></div>
+    <h3 class="appr-sub">Onaylandı · satış bekliyor</h3>
+    <div class="appr-list" id="apprWaiting"></div>
   </main>
 
   <!-- GÜN SONU -->

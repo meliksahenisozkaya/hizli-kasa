@@ -1,6 +1,6 @@
 // Yerel veritabanı (IndexedDB) - internet olmadan tüm veriler burada tutulur
 const DB = (() => {
-  const NAME = 'hizli-kasa', VERSION = 2;
+  const NAME = 'hizli-kasa', VERSION = 3;
   let db = null;
 
   const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
@@ -21,6 +21,7 @@ const DB = (() => {
         if (!has('stock_moves')) d.createObjectStore('stock_moves', { keyPath: 'id' }).createIndex('product_id', 'product_id', { unique: false });
         if (!has('outbox')) d.createObjectStore('outbox', { keyPath: 'seq', autoIncrement: true });
         if (!has('meta')) d.createObjectStore('meta', { keyPath: 'key' });
+        if (!has('orders')) d.createObjectStore('orders', { keyPath: 'id' });          // onaya gönderilen siparişler
         if (!has('archives')) d.createObjectStore('archives', { keyPath: 'month' });   // aylık sıkıştırılmış arşivler
       };
       r.onsuccess = () => { db = r.result; res(db); };

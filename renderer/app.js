@@ -115,7 +115,7 @@
   // ---------- Açılış / yönetici girişi ----------
   let role = null;            // 'admin' iken yönetici sekmeleri açık
   let mode = 'home';          // 'home' | 'sale' | 'admin'
-  const ADMIN_TABS = ['products', 'settings', 'security'];
+  const ADMIN_TABS = ['approvals', 'products', 'settings', 'security'];
   const canSee = t => !ADMIN_TABS.includes(t) || role === 'admin';
 
   async function sha(text) {
@@ -153,7 +153,9 @@
       return toast('Kullanıcı adı veya şifre hatalı', 'err');
     }
     role = 'admin'; mode = 'admin';
-    showTab('products');
+    const pend = (await DB.all('orders')).filter(o => o.status === 'pending').length;
+    showTab(pend ? 'approvals' : 'products');
+    if (pend) toast(`${pend} işlem onay bekliyor`, 'warn');
   });
 
   function renderHeader() {
@@ -196,7 +198,8 @@
     renderHeader();
     document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
     document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.id === 'tab-' + t));
-    if (t === 'sale') { renderChips(); renderTiles(); focusScan(); }
+    if (t === 'sale') { renderChips(); renderTiles(); renderOrderStrip(); focusScan(); }
+    if (t === 'approvals') renderApprovals();
     if (t === 'products') { renderProducts(); $('#prodSearch').focus(); }
     if (t === 'report') renderReport();
     if (t === 'settings') renderSettings();
@@ -232,7 +235,7 @@
     if (lockGuard()) return;
     if (!(qty > 0)) { toast('Geçersiz miktar', 'err'); beep(false); return; }
     if (!priceOk && !(p.price > 0)) { beep(false); return askPrice(p, qty); }
-    let line = cart.find(l => l.product_id === p.id);
+    let line = cart.find(l => l.product_id === p.id && !l.locked);
     const before = line ? line.qty : 0;
     if (line) { line.qty = r3(line.qty + qty); cart.splice(cart.indexOf(line), 1); cart.unshift(line); }
     else { line = { product_id: p.id, barcode: p.barcode, name: p.name, price: p.price, vat_rate: p.vat_rate, unit: p.unit, qty: r3(qty) }; cart.unshift(line); }
@@ -246,6 +249,10 @@
     $('#cartBody').innerHTML = cart.map((l, i) => {
       const p = products.get(l.product_id);
       const warn = '';
+      if (l.locked) return `<div class="ci locked" data-i="${i}">
+        <div class="nm">${esc(l.name)}<span class="lock">✓ onaylı</span></div><div class="lt">${money(lineTotal(l))}</div>
+        <div class="row2"><span class="qty">${qtyFmt(l.qty)}</span>
+          <span class="up">${esc(l.unit || '')} × <span class="pr">${money(l.price)}</span>${l.listPrice != null && l.listPrice !== l.price ? ` <s>${money(l.listPrice)}</s>` : ''}</span></div></div>`;
       return `<div class="ci ${i === 0 && flashFirst ? 'flash' : ''}" data-i="${i}">
         <div class="nm">${esc(l.name)}</div><div class="lt">${money(lineTotal(l))}</div>
         <div class="row2">
@@ -268,6 +275,7 @@
     const a = e.target.dataset.a; if (!a) return;
     const i = Number(e.target.closest('.ci').dataset.i);
     const l = cart[i]; if (!l) return;
+    if (l.locked) return toast('Onaylı siparişin ürünleri değiştirilemez', 'warn');
     if (a === 'inc') l.qty = r3(l.qty + 1);
     if (a === 'dec') { l.qty = r3(l.qty - 1); if (l.qty <= 0) cart.splice(i, 1); }
     if (a === 'rm') cart.splice(i, 1);
@@ -543,7 +551,10 @@
         payment_type: type, cash_given: given, change_amount: change,
         status: 'completed', cancelled_at: null, device: deviceId
       };
+      const ord = activeOrder ? await DB.get('orders', activeOrder) : null;
+      if (ord) { sale.order_no = ord.no; sale.order_note = ord.note || ''; }
       const ops = [{ store: 'sales', value: sale }, { store: 'meta', value: { key: 'sale_no', value: no } }];
+      if (ord) ops.push({ store: 'orders', value: { ...ord, status: 'done', done_at: ts, sale_id: sale.id, sale_no: no, payment_type: type } });
       const sync = [{ table: 'sales', row: sale }];
       const updated = [];
       await DB.write(ops, sync);
@@ -551,8 +562,8 @@
       updated.forEach(indexProduct);
       lastSale = sale;
       items.forEach(i => popularity.set(i.product_id, (popularity.get(i.product_id) || 0) + 1));
-      cart = [];
-      renderCart(); renderLastSale();
+      cart = []; activeOrder = null;
+      renderCart(); renderLastSale(); renderOrderStrip();
       toast(`Satış #${no} kaydedildi — ${money(sale.total)}`, 'ok');
       if (settings.autoPrint) printSale(sale);
       Sync.run();
@@ -569,6 +580,161 @@
       ${s.payment_type === 'cash' && s.change_amount > 0 ? `<div>Para üstü</div><div class="change">${money(s.change_amount)}</div>` : ''}
       <div style="margin-top:8px"><button class="ghost" id="reprint">Fişi yazdır</button></div>`;
     $('#reprint').onclick = () => printSale(s);
+  }
+
+  // ---------- ONAYA GÖNDER / ONAY BEKLEYEN İŞLEMLER ----------
+  let activeOrder = null;     // sepete yüklenmiş onaylı siparişin id'si
+  const tmShort = iso => new Date(iso).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const ordTotal = items => r2(items.reduce((a, i) => a + r2(i.price * i.qty), 0));
+
+  async function updateApprBadge() {
+    const n = (await DB.all('orders')).filter(o => o.status === 'pending').length;
+    const b = $('#apprBadge'); b.textContent = n; b.classList.toggle('hidden', !n);
+  }
+
+  function sendForApproval() {
+    if (lockGuard()) return;
+    if (!cart.length) return toast('Sepet boş', 'warn');
+    if (activeOrder) return toast('Bu sipariş zaten onaylı — Nakit veya Kart ile tamamlayın', 'warn');
+    const total = cartTotal();
+    openModal(`<h2>Onaya gönder</h2>
+      <div>${cart.length} kalem · <b>${money(total)}</b></div>
+      <label>Not (yönetici görecek)<textarea id="oaNote" rows="4" autofocus placeholder="ör. Toptan alım, indirim istiyor / Müşteri: Ahmet Bey"></textarea></label>
+      <div class="hint">Sepet onaya gönderilir ve temizlenir. Yönetici onayladığında satış ekranında bildirim olarak görünür.</div>
+      <div class="btns"><button class="ghost" id="oaC">Vazgeç</button><button class="primary" id="oaO">⏳ Onaya gönder</button></div>`, m => {
+      const ok = async () => {
+        const note = m.querySelector('#oaNote').value.trim();
+        const no = (await DB.getMeta('order_no', 0)) + 1;
+        const items = cart.slice().reverse().map(l => {
+          const p = products.get(l.product_id);
+          return { product_id: l.product_id, barcode: l.barcode, name: l.name, unit: l.unit, vat_rate: l.vat_rate,
+            qty: l.qty, req_price: l.price, list_price: p ? p.price : (l.listPrice ?? l.price), price: l.price };
+        });
+        const order = { id: uuid(), no, created_at: nowIso(), note, items, total: ordTotal(items), status: 'pending', device: deviceId };
+        try { await DB.write([{ store: 'orders', value: order }, { store: 'meta', value: { key: 'order_no', value: no } }]); }
+        catch (e) { return toast('Gönderilemedi: ' + e.message, 'err'); }
+        closeModal();
+        cart = []; renderCart(); renderOrderStrip(); updateApprBadge();
+        toast(`Sipariş #${no} onaya gönderildi`, 'ok');
+      };
+      m.querySelector('#oaO').onclick = ok;
+      m.querySelector('#oaC').onclick = closeModal;
+      m.querySelector('#oaNote').onkeydown = e => { if (e.key === 'Enter' && e.ctrlKey) ok(); };
+    });
+  }
+
+  async function renderOrderStrip() {
+    const all = await DB.all('orders');
+    const appr = all.filter(o => o.status === 'approved').sort((a, b) => (a.approved_at || '').localeCompare(b.approved_at || ''));
+    const pend = all.filter(o => o.status === 'pending').length;
+    // Yeni onay / ret bildirimleri (bir kez)
+    const fresh = all.filter(o => (o.status === 'approved' || o.status === 'rejected') && !o.notified);
+    if (fresh.length && mode === 'sale') {
+      fresh.forEach(o => toast(o.status === 'approved' ? `✓ Sipariş #${o.no} onaylandı — ${money(o.total)}` : `✕ Sipariş #${o.no} reddedildi`, o.status === 'approved' ? 'ok' : 'err'));
+      beep(true);
+      await DB.write(fresh.map(o => ({ store: 'orders', value: { ...o, notified: true } })));
+    }
+    const el = $('#orderStrip');
+    el.classList.toggle('hidden', !appr.length && !pend);
+    el.innerHTML = appr.map(o => `<button class="ord ${activeOrder === o.id ? 'active' : ''}" data-id="${o.id}">✓
+        <span>Onaylanan sipariş <b>#${o.no}</b> · <b>${money(o.total)}</b>${o.note ? `<small>${esc(o.note)}</small>` : ''}</span></button>`).join('')
+      + (pend ? `<span class="pend">⏳ Onay bekleyen: ${pend}</span>` : '');
+    el.querySelectorAll('.ord').forEach(b => b.onclick = () => openApprovedOrder(appr.find(o => o.id === b.dataset.id)));
+  }
+
+  async function openApprovedOrder(o) {
+    if (!o || lockGuard()) return;
+    if (activeOrder !== o.id) {
+      if (cart.length && !(await confirmBox('Onaylı siparişi aç', 'Sepetteki ürünler kaldırılıp onaylı sipariş yüklensin mi?', 'Evet, yükle'))) return;
+      cart = o.items.slice().reverse().map(i => ({ product_id: i.product_id, barcode: i.barcode, name: i.name, price: i.price,
+        vat_rate: i.vat_rate, unit: i.unit, qty: i.qty, listPrice: i.req_price, locked: true }));
+      activeOrder = o.id;
+      renderCart(); renderOrderStrip();
+    }
+    openModal(`<h2>Onaylanan sipariş #${o.no}</h2>
+      ${o.note ? `<div class="appr-card" style="padding:0;border:0;background:none"><div class="note">${esc(o.note)}</div></div>` : ''}
+      <div class="big-total">${money(o.total)}</div>
+      <div class="hint">Onaylanmış güncel fiyatlarla sepete yüklendi. Ödeme türünü seçin.</div>
+      <div class="order-choice">
+        <button class="pay cash" id="ocC">NAKİT <kbd>F8</kbd></button>
+        <button class="pay card" id="ocK">KART / POS <kbd>F9</kbd></button>
+      </div>
+      <div class="btns"><button class="ghost" id="ocX">Sonra (Esc)</button></div>`, m => {
+      m.querySelector('#ocC').onclick = () => { closeModal(); payCash(); };
+      m.querySelector('#ocK').onclick = () => { closeModal(); payCard(); };
+      m.querySelector('#ocX').onclick = closeModal;
+      m.onkeydown = e => {
+        if (e.key === 'F8') { e.preventDefault(); e.stopPropagation(); closeModal(); payCash(); }
+        if (e.key === 'F9') { e.preventDefault(); e.stopPropagation(); closeModal(); payCard(); }
+      };
+    });
+  }
+
+  async function renderApprovals() {
+    const all = await DB.all('orders');
+    const pend = all.filter(o => o.status === 'pending').sort((a, b) => a.created_at.localeCompare(b.created_at));
+    const wait = all.filter(o => o.status === 'approved').sort((a, b) => a.created_at.localeCompare(b.created_at));
+    updateApprBadge();
+    const rows = (o, edit) => o.items.map((i, k) => `<tr>
+        <td>${esc(i.name)}</td><td class="num">${qtyFmt(i.qty)} ${esc(i.unit || '')}</td>
+        <td class="num">${edit ? `<input class="pi" data-k="${k}" inputmode="decimal" value="${String(i.price).replace('.', ',')}">` : money(i.price)}
+          ${i.list_price != null && i.list_price !== i.price ? `<div class="old">Liste: ${money(i.list_price)}</div>` : ''}</td>
+        <td class="num lt" data-k="${k}">${money(r2(i.price * i.qty))}</td></tr>`).join('');
+    const card = (o, edit) => `<div class="appr-card ${edit ? '' : 'wait'}" data-id="${o.id}">
+        <div class="hd"><b>Sipariş #${o.no}</b><span>${tmShort(o.created_at)}${o.approved_at ? ' · onay ' + tmShort(o.approved_at) : ''}</span></div>
+        ${o.note ? `<div class="note">${esc(o.note)}</div>` : '<div class="hint">Not yok</div>'}
+        <table><thead><tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Birim fiyat (₺)</th><th class="num">Tutar</th></tr></thead><tbody>${rows(o, edit)}</tbody></table>
+        <div class="tot"><span>TOPLAM</span><span class="tv">${money(o.total)}</span></div>
+        <div class="act">${edit
+          ? `<button class="danger" data-a="rej">Reddet</button><button class="ok" data-a="ok">✓ Fiyatları onayla</button>`
+          : `<button class="ghost" data-a="back">Tekrar düzenle</button><button class="danger" data-a="del">Sil</button>`}</div></div>`;
+    $('#apprList').innerHTML = pend.length ? pend.map(o => card(o, true)).join('') : '<div class="appr-empty">Onay bekleyen işlem yok.</div>';
+    $('#apprWaiting').innerHTML = wait.length ? wait.map(o => card(o, false)).join('') : '<div class="appr-empty">Yok.</div>';
+
+    document.querySelectorAll('#tab-approvals .appr-card').forEach(c => {
+      const o = all.find(x => x.id === c.dataset.id);
+      const read = () => o.items.map((i, k) => {
+        const inp = c.querySelector(`input.pi[data-k="${k}"]`);
+        return { ...i, price: inp ? r2(parseNum(inp.value)) : i.price };
+      });
+      c.querySelectorAll('input.pi').forEach(inp => {
+        const k = Number(inp.dataset.k);
+        const upd = () => {
+          const items = read(), it = items[k];
+          inp.classList.toggle('chg', it.price !== o.items[k].req_price);
+          c.querySelector(`.lt[data-k="${k}"]`).textContent = Number.isFinite(it.price) ? money(r2(it.price * it.qty)) : '—';
+          c.querySelector('.tv').textContent = money(ordTotal(items.map(i => ({ ...i, price: Number.isFinite(i.price) ? i.price : 0 }))));
+        };
+        inp.oninput = upd;
+        inp.onfocus = () => inp.select();
+        inp.onkeydown = e => { if (e.key === 'Enter') { const nx = c.querySelector(`input.pi[data-k="${k + 1}"]`); if (nx) nx.focus(); else c.querySelector('[data-a=ok]').focus(); } };
+        upd();
+      });
+      c.querySelectorAll('[data-a]').forEach(b => b.onclick = async () => {
+        const a = b.dataset.a;
+        if (a === 'ok') {
+          const items = read();
+          if (items.some(i => !(i.price > 0))) return toast('Tüm ürünlere geçerli bir fiyat girin', 'err');
+          await DB.write([{ store: 'orders', value: { ...o, items, total: ordTotal(items), status: 'approved', approved_at: nowIso(), notified: false } }]);
+          toast(`Sipariş #${o.no} onaylandı — satış ekranına gönderildi`, 'ok');
+        }
+        if (a === 'rej') {
+          if (!(await confirmBox('Reddet', `Sipariş #${o.no} reddedilsin mi?`, 'Reddet', true))) return;
+          await DB.write([{ store: 'orders', value: { ...o, status: 'rejected', rejected_at: nowIso(), notified: false } }]);
+          toast(`Sipariş #${o.no} reddedildi`, 'warn');
+        }
+        if (a === 'back') {
+          if (activeOrder === o.id) { activeOrder = null; cart = []; renderCart(); }
+          await DB.write([{ store: 'orders', value: { ...o, status: 'pending', approved_at: null, notified: true } }]);
+        }
+        if (a === 'del') {
+          if (!(await confirmBox('Sil', `Onaylı sipariş #${o.no} silinsin mi?`, 'Sil', true))) return;
+          if (activeOrder === o.id) { activeOrder = null; cart = []; renderCart(); }
+          await DB.write([{ store: 'orders', del: o.id }]);
+        }
+        renderApprovals();
+      });
+    });
   }
 
   // ---------- Yazdırma ----------
@@ -1415,18 +1581,20 @@
       return;
     }
     if (currentTab === 'login') return;
-    const keys = mode === 'admin' ? { F2: 'products', F3: 'report', F4: 'settings', F5: 'security' } : { F1: 'sale', F3: 'report' };
+    const keys = mode === 'admin' ? { F2: 'products', F3: 'report', F4: 'settings', F5: 'security', F6: 'approvals' } : { F1: 'sale', F3: 'report' };
     if (keys[e.key]) { e.preventDefault(); showTab(keys[e.key]); return; }
     if (currentTab === 'sale') {
       if (e.key === 'F8') { e.preventDefault(); payCash(); }
       if (e.key === 'F9') { e.preventDefault(); payCard(); }
+      if (e.key === 'F7') { e.preventDefault(); sendForApproval(); }
     }
   });
   document.querySelectorAll('#navTabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $('#btnCash').onclick = payCash;
   $('#btnCard').onclick = payCard;
+  $('#btnSendAppr').onclick = sendForApproval;
   $('#btnClear').onclick = async () => {
-    if (cart.length && await confirmBox('Sepeti temizle', 'Sepetteki tüm ürünler silinsin mi?', 'Temizle', true)) { cart = []; renderCart(); }
+    if (cart.length && await confirmBox('Sepeti temizle', activeOrder ? 'Onaylı sipariş sepetten kaldırılsın mı? (Sipariş silinmez, listede bekler)' : 'Sepetteki tüm ürünler silinsin mi?', 'Temizle', true)) { cart = []; activeOrder = null; renderCart(); renderOrderStrip(); }
   };
   $('#modalBack').addEventListener('mousedown', e => { if (e.target.id === 'modalBack') closeModal(); });
 
@@ -1439,7 +1607,7 @@
       await loadAll();
       await loadPopularity();
       await getAuth();
-      renderChips(); renderCart(); renderLastSale(); goHome();
+      renderChips(); renderCart(); renderLastSale(); updateApprBadge(); goHome();
       Sync.start();
       checkMonthly();
       setInterval(checkMonthly, 30 * 60 * 1000);

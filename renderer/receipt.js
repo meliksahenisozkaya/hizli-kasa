@@ -42,6 +42,7 @@ const Receipt = (() => {
       ${header(settings)}
       <div class="row small"><span>${dt(s.created_at)}</span><span>Fiş No: ${s.sale_no}</span></div>
       ${s.status === 'cancelled' ? '<div class="c b">*** İPTAL EDİLDİ ***</div>' : ''}
+      ${s.order_no ? `<div class="small">Onaylı sipariş #${s.order_no}${s.order_note ? ' · ' + esc(s.order_note) : ''}</div>` : ''}
       <hr><table>${items}</table><hr>
       <div class="row big"><span>TOPLAM</span><span>${tl(s.total)} ₺</span></div>
       ${vatRows}
