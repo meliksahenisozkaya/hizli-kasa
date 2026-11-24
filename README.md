@@ -7,7 +7,7 @@ Barkod okut → Nakit (F8) / Kart (F9) → fiş. İnternet yokken de çalışır
 - Kayıtlı olmayan barkod okutulunca anında ürün ekleme ekranı açılır
 - Nakit ödemede para üstü hesabı (hızlı banknot butonları)
 - Stok takibi: satışta stok düşer, mal girişi / sayım / fire, kritik stok uyarısı
-- Excel (.xls / .xlsx) veya CSV ile toplu ürün yükleme — muhasebe programının "Stok Kartları Listesi" çıktısı doğrudan okunur, önizleme gösterilir
+- Excel (.xls / .xlsx) veya CSV ile toplu ürün yükleme — muhasebe programının "Fiyat Listesi (Perakende Satış Fiyatları)" ve "Stok Kartları Listesi" raporları doğrudan okunur; KDV hariç fiyatlara KDV eklenir; önizleme gösterilir; içe aktarma penceresinden örnek Excel indirilebilir
 - Ürün silme (tek tek veya seçerek toplu), buluttan da silinir
 - Fiyatı olmayan ürün okutulunca fiyat sorulur, istenirse ürüne kaydedilir
 - Stok kodu ile satış (barkodsuz ürünler için kodu yazıp Enter)
