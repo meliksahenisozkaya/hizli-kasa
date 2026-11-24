@@ -376,3 +376,25 @@ body.mode-admin #navTabs .panel-badge { display: inline-block; }
 .cat-pick button:hover { border-color: var(--accent); filter: none; }
 .grid tr.sec td { background: #1b1b1f; color: #ffb28f; font-weight: 700; border-top: 1px solid var(--line2); }
 .grid tr.sec td span { color: var(--muted); font-weight: 500; font-size: 12px; margin-left: 6px; }
+
+/* Ürün fotoğrafları */
+.tiles { grid-auto-rows: 196px; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
+.tile { position: relative; padding: 8px 10px 10px; gap: 6px; justify-content: flex-start; }
+.tile .ph { height: 96px; border-radius: 10px; overflow: hidden; display: grid; place-items: center; flex: none;
+  background: radial-gradient(120% 120% at 50% 20%, #fbf7f2, #ece4da); }
+.tile .ph img { width: 100%; height: 100%; object-fit: contain; }
+.tile .ph-x { font-size: 30px; font-weight: 800; color: #d9cbbb; letter-spacing: 1px; }
+.tile .badge { position: absolute; top: 14px; left: 14px; box-shadow: 0 4px 12px rgba(0,0,0,.35); }
+.tile .n { font-size: 13px; -webkit-line-clamp: 2; }
+.tile .f { margin-top: auto; }
+.img-row { display: flex; gap: 14px; align-items: center; }
+.img-prev { width: 110px; height: 110px; border-radius: 12px; flex: none; display: grid; place-items: center; overflow: hidden;
+  background: radial-gradient(120% 120% at 50% 20%, #fbf7f2, #ece4da); color: #9a8c7e; font-size: 12px; }
+.img-prev img { width: 100%; height: 100%; object-fit: contain; }
+.img-acts { display: flex; flex-direction: column; gap: 6px; }
+.img-acts button { padding: 7px 12px; font-size: 13px; text-align: left; }
+.pname { display: inline-flex; align-items: center; gap: 10px; }
+.pname img, .pname i { width: 30px; height: 30px; border-radius: 7px; object-fit: contain; background: #f3ede6; flex: none; }
+.pname i { background: #222227; }
+.modal .two input, .modal .two select { width: 100%; min-width: 0; }
+.modal .two label { min-width: 0; }

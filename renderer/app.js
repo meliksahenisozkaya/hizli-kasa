@@ -287,6 +287,22 @@
       popularity.set(i.product_id, (popularity.get(i.product_id) || 0) + 1)));
   }
 
+  const initials = name => String(name || '').replace(/[^\p{L}\s]/gu, ' ').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toLocaleUpperCase('tr-TR');
+
+  // Fotoğrafı küçük bir resme çevirir (ürünle birlikte saklanır, internetsiz de görünür)
+  async function toThumb(src, size = 220) {
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const k = Math.min(size / img.naturalWidth, size / img.naturalHeight);
+    const w = img.naturalWidth * k, h = img.naturalHeight * k;
+    c.getContext('2d').drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+    return c.toDataURL('image/webp', 0.82);
+  }
+  const fetchThumb = async url => toThumb(window.kasa && window.kasa.fetchImage ? await window.kasa.fetchImage(url) : url);
+
   function renderChips() {
     const cats = allCategories();
     if (activeGroup && !cats.includes(activeGroup)) activeGroup = '';
@@ -311,6 +327,7 @@
     $('#tiles').innerHTML = list.map(p => {
       const c = inCart.get(p.id);
       return `<button class="tile ${c ? 'in' : ''}" data-id="${p.id}" title="${esc(p.name)}">
+        <span class="ph">${p.image ? `<img src="${p.image}" alt="" loading="lazy">` : `<span class="ph-x">${esc(initials(p.name))}</span>`}</span>
         ${c ? `<span class="badge">${qtyFmt(c)} ${esc(p.unit)}</span>` : ''}
         <span class="n">${esc(p.name)}</span>
         <span class="f"><span class="p ${p.price > 0 ? '' : 'none'}">${p.price > 0 ? money(p.price) : 'Fiyat yok'}</span>
@@ -534,6 +551,10 @@
     const v = p || { barcode: opts.barcode || '', name: '', price: '', vat_rate: 10, unit: 'adet', stock: 0, min_stock: 0, code: '', group: '' };
     const units = [...new Set(['adet', 'kg', 'gr', 'paket', 'kavanoz', 'koli', 'lt', 'teneke', v.unit].filter(Boolean))];
     openModal(`<h2>${isNew ? 'Yeni ürün' : 'Ürünü düzenle'}</h2>
+      <div class="img-row"><div class="img-prev" id="fImgPrev">${v.image ? `<img src="${v.image}" alt="">` : '<span>Fotoğraf yok</span>'}</div>
+        <div class="img-acts"><button type="button" class="ghost" id="fImgFile">Bilgisayardan seç</button>
+          <button type="button" class="ghost" id="fImgSite">halisfindik.com'dan bul</button>
+          <button type="button" class="ghost" id="fImgDel">Kaldır</button><input type="file" id="fImgInput" accept="image/*" hidden></div></div>
       <label>Barkod
         <div style="display:flex;gap:6px"><input id="fBarcode" style="flex:1" value="${esc(v.barcode)}"><button class="ghost" id="fGen" type="button">Barkod üret</button></div>
       </label>
@@ -552,6 +573,20 @@
       </div>
       <div class="btns"><button class="ghost" id="fCancel">Vazgeç</button><button class="primary" id="fSave">Kaydet (Enter)</button></div>`, m => {
       m.querySelector('#fGen').onclick = () => { m.querySelector('#fBarcode').value = ean13Internal(); };
+      let image = v.image || null;
+      const showImg = () => { m.querySelector('#fImgPrev').innerHTML = image ? `<img src="${image}" alt="">` : '<span>Fotoğraf yok</span>'; };
+      m.querySelector('#fImgFile').onclick = () => m.querySelector('#fImgInput').click();
+      m.querySelector('#fImgInput').onchange = async e => {
+        const f = e.target.files[0]; if (!f) return;
+        const url = URL.createObjectURL(f);
+        try { image = await toThumb(url); showImg(); } catch (_) { toast('Resim okunamadı', 'err'); } finally { URL.revokeObjectURL(url); }
+      };
+      m.querySelector('#fImgSite').onclick = async () => {
+        const u = SiteImages.urlFor(m.querySelector('#fName').value);
+        if (!u) return toast('Bu ürün adı için halisfindik.com fotoğrafı bulunamadı', 'warn');
+        try { image = await fetchThumb(u); showImg(); } catch (e) { toast('İndirilemedi (internet bağlantısını kontrol edin)', 'err'); }
+      };
+      m.querySelector('#fImgDel').onclick = () => { image = null; showImg(); };
       m.querySelector('#fCancel').onclick = closeModal;
       const save = async () => {
         const barcode = m.querySelector('#fBarcode').value.trim();
@@ -573,6 +608,7 @@
           id: p ? p.id : uuid(), barcode: barcode || null, name, price: r2(price),
           code: code || null, group: v.group || null,
           category: m.querySelector('#fCat').value.trim() || Importer.guessCategory(name),
+          image: image || null,
           stock: r3(stock), vat_rate: Number(m.querySelector('#fVat').value), unit: m.querySelector('#fUnit').value,
           min_stock: r3(min), active: p ? p.active : true, updated_at: ts
         };
@@ -650,7 +686,7 @@
     const shown = listed.slice(0, 500);
     $('#prodBody').innerHTML = shown.map(p => `<tr class="${p.active ? '' : 'passive'} ${selected.has(p.id) ? 'sel' : ''}" data-id="${p.id}">
       <td class="cb"><input type="checkbox" data-a="sel" ${selected.has(p.id) ? 'checked' : ''}></td>
-      <td>${esc(p.code || '')}</td><td>${esc(p.barcode || '—')}</td><td>${esc(p.name)}</td><td><span class="cat-tag">${esc(catOf(p))}</span></td>
+      <td>${esc(p.code || '')}</td><td>${esc(p.barcode || '—')}</td><td><span class="pname">${p.image ? `<img src="${p.image}" alt="">` : '<i></i>'}${esc(p.name)}</span></td><td><span class="cat-tag">${esc(catOf(p))}</span></td>
       <td class="num ${p.price > 0 ? '' : 'noprice'}">${p.price > 0 ? money(p.price) : 'Fiyat yok'}</td><td class="num">%${p.vat_rate}</td>
 <td>${esc(p.unit)}</td>
       <td><div class="acts"><button data-a="edit">Düzenle</button>
@@ -679,6 +715,45 @@
     renderProducts();
   });
   $('#btnDeleteSel').onclick = () => deleteProducts([...selected]);
+  $('#btnPhotos').onclick = () => {
+    const all = [...products.values()].filter(p => p.active);
+    const matchable = all.filter(p => SiteImages.urlFor(p.name));
+    const missing = matchable.filter(p => !p.image);
+    openModal(`<h2>halisfindik.com fotoğrafları</h2>
+      <div class="hint">Ürün adlarına göre sitedeki fotoğraflar eşleştirilir, küçültülüp ürünle birlikte kaydedilir (internet olmadan da görünür).
+      Fotoğrafı sitede olmayan ürünler (çikolatalı, krema, püre vb.) atlanır; bunlara Düzenle'den kendiniz fotoğraf ekleyebilirsiniz.</div>
+      <div><b>${matchable.length}</b> ürün eşleşti · <b>${missing.length}</b> tanesinin fotoğrafı yok.</div>
+      <label class="chk" style="flex-direction:row"><input type="checkbox" id="phAll"> Fotoğrafı olan ürünleri de yenile</label>
+      <div class="hint" id="phProg"></div>
+      <div class="btns"><button class="ghost" id="phC">Kapat</button><button class="primary" id="phO">Fotoğrafları indir</button></div>`, m => {
+      m.querySelector('#phC').onclick = closeModal;
+      m.querySelector('#phO').onclick = async () => {
+        const list = m.querySelector('#phAll').checked ? matchable : missing;
+        if (!list.length) return toast('İndirilecek fotoğraf yok', 'warn');
+        const btn = m.querySelector('#phO'); btn.disabled = true;
+        const prog = m.querySelector('#phProg');
+        const cache = new Map(); const ts = nowIso(); const rows = []; let fail = 0;
+        for (const p of list) {
+          const u = SiteImages.urlFor(p.name);
+          prog.textContent = `İndiriliyor… ${rows.length + fail + 1} / ${list.length}`;
+          try {
+            if (!cache.has(u)) cache.set(u, await fetchThumb(u));
+            rows.push({ ...p, image: cache.get(u), updated_at: ts });
+          } catch (_) { fail++; }
+        }
+        try {
+          for (let i = 0; i < rows.length; i += 100) {
+            const part = rows.slice(i, i + 100);
+            await DB.write(part.map(value => ({ store: 'products', value })), part.map(row => ({ table: 'products', row })));
+          }
+          rows.forEach(indexProduct);
+          closeModal(); renderProducts();
+          toast(`${rows.length} ürüne fotoğraf eklendi${fail ? `, ${fail} tanesi indirilemedi (internet?)` : ''}`, fail ? 'warn' : 'ok');
+          Sync.run();
+        } catch (e) { toast('Kaydedilemedi: ' + e.message, 'err'); btn.disabled = false; }
+      };
+    });
+  };
   $('#btnCatSel').onclick = () => {
     const ids = [...selected].filter(id => products.has(id));
     if (!ids.length) return;
