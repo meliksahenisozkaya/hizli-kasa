@@ -1,0 +1,13 @@
+{
+  "installCommand": "npm install --ignore-scripts --no-audit --no-fund",
+  "buildCommand": "node scripts/build-web.js",
+  "outputDirectory": "web-dist",
+  "framework": null,
+  "headers": [
+    { "source": "/(.*)", "headers": [
+      { "key": "Permissions-Policy", "value": "camera=(self)" },
+      { "key": "X-Content-Type-Options", "value": "nosniff" },
+      { "key": "Cache-Control", "value": "no-cache" }
+    ] }
+  ]
+}
