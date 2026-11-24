@@ -1,7 +1,7 @@
 {
   "name": "hizli-kasa",
   "productName": "Hizli Kasa",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "description": "Barkodlu hızlı satış kasası - çevrimdışı çalışır, buluta senkronize olur",
   "main": "main.js",
   "author": "Sirket",

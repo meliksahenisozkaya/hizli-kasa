@@ -83,7 +83,7 @@ ipcMain.handle('excel:save', async (_e, rows, name) => {
   });
   if (r.canceled || !r.filePath) return { saved: false };
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [{ wch: 10 }, { wch: 40 }, { wch: 16 }, { wch: 7 }, { wch: 18 }, { wch: 14 }, { wch: 8 }, { wch: 18 }, { wch: 38 }];
+  ws['!cols'] = [{ wch: 10 }, { wch: 40 }, { wch: 16 }, { wch: 7 }, { wch: 18 }, { wch: 14 }, { wch: 8 }, { wch: 18 }, { wch: 18 }, { wch: 38 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Fiyat Listesi');
   XLSX.writeFile(wb, r.filePath);
