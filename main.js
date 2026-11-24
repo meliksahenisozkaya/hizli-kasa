@@ -1,5 +1,5 @@
 // Hızlı Kasa - Electron ana süreci
-const { app, BrowserWindow, ipcMain, Menu, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, dialog, net } = require('electron');
 const path = require('path');
 
 let win;
@@ -91,6 +91,16 @@ ipcMain.handle('excel:save', async (_e, rows, name) => {
   XLSX.writeFile(wb, r.filePath);
   shell.showItemInFolder(r.filePath);
   return { saved: true, path: r.filePath };
+});
+
+ipcMain.handle('image:fetch', async (_e, url) => {
+  if (!/^https:\/\//.test(url)) throw new Error('Geçersiz adres');
+  const r = await net.fetch(url);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const type = r.headers.get('content-type') || 'image/png';
+  if (!type.startsWith('image/')) throw new Error('Resim değil');
+  const buf = Buffer.from(await r.arrayBuffer());
+  return 'data:' + type + ';base64,' + buf.toString('base64');
 });
 
 ipcMain.handle('app:version', () => app.getVersion());
