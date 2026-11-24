@@ -349,15 +349,14 @@
   }
 
   let activeSub = '';
-  const CAT_ICON = { 'Fındık Ezmesi': '🫙', 'Krokan & Çikolata': '🍫', 'Kıyılmış & Un': '🥣', 'Kavrulmuş İç': '🔥', 'Natürel İç': '🌰', 'Kabuklu & Çıtlama': '🥜', 'Diğer': '📦' };
   function renderChips() {
     const cats = allCategories();
     if (activeGroup && activeGroup !== '*' && !cats.includes(activeGroup)) { activeGroup = ''; activeSub = ''; }
     const count = c => [...products.values()].filter(p => p.active && catOf(p) === c).length;
     const searching = !!$('#scanInput').value.trim();
     $('#groupChips').innerHTML = cats.map(g =>
-      `<button data-g="${esc(g)}" class="${g === activeGroup && !searching ? 'on' : ''}"><span class="ic">${CAT_ICON[g] || '🏷️'}</span><span class="nm">${esc(g)}</span><span class="cnt">${count(g)}</span></button>`).join('')
-      + (cats.length ? `<button data-g="*" class="all ${activeGroup === '*' && !searching ? 'on' : ''}"><span class="ic">☰</span><span class="nm">Tüm ürünler</span><span class="cnt">${[...products.values()].filter(p => p.active).length}</span></button>` : '');
+      `<button data-g="${esc(g)}" class="${g === activeGroup && !searching ? 'on' : ''}"><span class="nm">${esc(g)}</span><span class="cnt">${count(g)}</span></button>`).join('')
+      + (cats.length ? `<button data-g="*" class="all ${activeGroup === '*' && !searching ? 'on' : ''}"><span class="nm">Tüm ürünler</span><span class="cnt">${[...products.values()].filter(p => p.active).length}</span></button>` : '');
   }
   $('#groupChips').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -390,14 +389,14 @@
     if (q) {
       let list = sortP(active.filter(p => lower(p.name).includes(q) || (p.barcode || '').includes(raw) || (p.code || '') === raw));
       const total = list.length; list = list.slice(0, 240);
-      crumb.innerHTML = `<span class="cur">🔎 Arama: “${esc(raw)}”</span><span class="cnt">${total} ürün</span>`;
+      crumb.innerHTML = `<span class="cur">Arama: “${esc(raw)}”</span><span class="cnt">${total} ürün</span>`;
       tiles.innerHTML = list.map(p => tileHtml(p, inCart)).join('') || '<div class="none">Eşleşen ürün yok</div>';
       return;
     }
     // Başlangıç: grup seçilmedi
     if (!activeGroup) {
       crumb.innerHTML = '';
-      tiles.innerHTML = `<div class="pick-hint"><div class="arrow">←</div><b>Soldan bir grup seçin</b><span>veya barkod okutun / ürün adı yazın</span></div>`;
+      tiles.innerHTML = `<div class="pick-hint"><b>Soldan bir grup seçin</b><span>veya barkod okutun / ürün adı yazın</span></div>`;
       return;
     }
     if (activeGroup === '*') {
@@ -410,7 +409,7 @@
     if (activeSub && !subs.includes(activeSub)) activeSub = '';
     // Alt grup seçimi (birden fazla alt grup varsa)
     if (subs.length > 1 && !activeSub) {
-      crumb.innerHTML = `<span class="cur">${CAT_ICON[activeGroup] || ''} ${esc(activeGroup)}</span><span class="cnt">Alt grup seçin</span>`;
+      crumb.innerHTML = `<span class="cur">${esc(activeGroup)}</span><span class="cnt">Alt grup seçin</span>`;
       tiles.classList.add('subs');
       tiles.innerHTML = subs.map(sg => {
         const list = sortP(inCat.filter(p => subOf(p) === sg));
@@ -425,7 +424,7 @@
     const list = sortP(inCat.filter(p => subs.length <= 1 || subOf(p) === activeSub));
     crumb.innerHTML = subs.length > 1
       ? `<button class="back" data-back="1">‹ Geri</button><span class="lnk" data-back="1">${esc(activeGroup)}</span><span class="sep">›</span><span class="cur">${esc(activeSub || 'Diğer')}</span><span class="cnt">${list.length} ürün</span>`
-      : `<span class="cur">${CAT_ICON[activeGroup] || ''} ${esc(activeGroup)}</span><span class="cnt">${list.length} ürün</span>`;
+      : `<span class="cur">${esc(activeGroup)}</span><span class="cnt">${list.length} ürün</span>`;
     tiles.innerHTML = list.map(p => tileHtml(p, inCart)).join('') || '<div class="none">Bu grupta ürün yok</div>';
   }
   $('#crumb').addEventListener('click', e => {
@@ -663,7 +662,7 @@
       <div>${cart.length} kalem · <b>${money(total)}</b></div>
       <label>Not (yönetici görecek)<textarea id="oaNote" rows="4" autofocus placeholder="ör. Toptan alım, indirim istiyor / Müşteri: Ahmet Bey"></textarea></label>
       <div class="hint">Sepet onaya gönderilir ve temizlenir. Yönetici onayladığında satış ekranında bildirim olarak görünür.</div>
-      <div class="btns"><button class="ghost" id="oaC">Vazgeç</button><button class="primary" id="oaO">⏳ Onaya gönder</button></div>`, m => {
+      <div class="btns"><button class="ghost" id="oaC">Vazgeç</button><button class="primary" id="oaO">Onaya gönder</button></div>`, m => {
       const ok = async () => {
         const note = m.querySelector('#oaNote').value.trim();
         const no = (await DB.getMeta('order_no', 0)) + 1;
@@ -700,7 +699,7 @@
     el.classList.toggle('hidden', !appr.length && !pend);
     el.innerHTML = appr.map(o => `<button class="ord ${activeOrder === o.id ? 'active' : ''}" data-id="${o.id}">✓
         <span>Onaylanan sipariş <b>#${o.no}</b> · <b>${money(o.total)}</b>${o.note ? `<small>${esc(o.note)}</small>` : ''}</span></button>`).join('')
-      + (pend ? `<span class="pend">⏳ Onay bekleyen: ${pend}</span>` : '');
+      + (pend ? `<span class="pend">Onay bekleyen: ${pend}</span>` : '');
     el.querySelectorAll('.ord').forEach(b => b.onclick = () => openApprovedOrder(appr.find(o => o.id === b.dataset.id)));
   }
 
