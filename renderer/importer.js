@@ -44,6 +44,7 @@ const Importer = (() => {
     if (n.includes('gurub') || n.includes('grub') || n === 'grup') return 'group';
     if (n.includes('birim') && !n.includes('fiyat')) return 'unit';
     if (n === 'mevcut' || n.includes('mevcut') || n === 'stok' || n === 'miktar' || n === 'stok miktari' || n === 'kalan') return 'stock';
+    if (n.includes('alis') || n.includes('maliyet')) return 'cost';
     if (n.includes('kdv') && n.includes('dahil')) return 'vatIncl';
     if (n.includes('fiyat') || n.includes('satis')) return 'price';
     if (n.includes('kdv')) return 'vat';
@@ -89,6 +90,7 @@ const Importer = (() => {
           group: text(get(r, 'group')),
           stock: num(get(r, 'stock')),
           price: num(get(r, 'price')),
+          cost: num(get(r, 'cost')),
           vat: num(get(r, 'vat')),
           vatIncl: (() => { const v = norm(get(r, 'vatIncl')); return v ? !/^(hayir|h|no|0|haric)$/.test(v) : null; })()
         });

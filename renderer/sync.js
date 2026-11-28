@@ -125,11 +125,14 @@ const Sync = (() => {
     return r.json();
   }
 
+  let trimmedOnce = false;
   async function push() {
     const c = await cfg();
     const prefix = `projects/${c.url}/databases/(default)/documents/`;
     const TS = [{ fieldPath: '_ts', setToServerValue: 'REQUEST_TIME' }];   // sunucu saati: cihaz saatleri farklı olsa da sıralama doğru kalır
+    let checkAt = '', pushed = false;
     for (;;) {
+      checkAt = new Date().toISOString();
       const batch = await DB.outboxBatch(200);
       if (!batch.length) break;
       // Aynı kaydın yalnızca son hali gönderilir
@@ -149,9 +152,12 @@ const Sync = (() => {
       }
       await api('POST', ':commit', { writes });   // tek seferde, ya hepsi ya hiçbiri
       await DB.outboxDelete(batch.map(b => b.seq));
+      pushed = true;
       state.pending = await DB.count('outbox');
       emit();
     }
+    // Kuyruk boşaldı: buluta ulaşan kayıtlar yedek defterden çıkarılır
+    if ((pushed || !trimmedOnce) && window.kasa && window.kasa.journalTrim) { trimmedOnce = true; try { await window.kasa.journalTrim(checkAt); } catch (_) {} }
   }
 
   async function fetchAll(collection) {
@@ -190,7 +196,10 @@ const Sync = (() => {
     products: p => ({ ...p, price: Number(p.price || 0), stock: Number(p.stock || 0), vat_rate: Number(p.vat_rate || 0),
       min_stock: Number(p.min_stock || 0), active: p.active !== false, updated_at: iso(p.updated_at) }),
     sales: s => ({ ...s, created_at: iso(s.created_at), items: s.items || [], sale_no: Number(s.sale_no || 0), total: Number(s.total || 0) }),
-    orders: o => ({ ...o, created_at: iso(o.created_at), items: o.items || [], no: Number(o.no || 0), total: Number(o.total || 0) })
+    orders: o => ({ ...o, created_at: iso(o.created_at), items: o.items || [], no: Number(o.no || 0), total: Number(o.total || 0) }),
+    cash_moves: m => ({ ...m, created_at: iso(m.created_at), amount: Number(m.amount || 0) }),
+    customers: c => ({ ...c, created_at: iso(c.created_at) }),
+    cari: e => ({ ...e, created_at: iso(e.created_at), amount: Number(e.amount || 0) })
   };
 
   // Uzak kayıtları yerel veritabanına uygular; daha yeni olan kazanır
@@ -219,7 +228,7 @@ const Sync = (() => {
   async function applyTombstones(rows, sum) {
     const ops = [];
     for (const t of rows) {
-      if (!['products', 'sales', 'orders'].includes(t.table) || !t.ref) continue;
+      if (!['products', 'sales', 'orders', 'cash_moves', 'customers', 'cari'].includes(t.table) || !t.ref) continue;
       if (await DB.get(t.table, t.ref)) { ops.push({ store: t.table, del: t.ref }); sum[t.table] = (sum[t.table] || 0) + 1; }
     }
     if (ops.length) await DB.write(ops);
@@ -233,6 +242,9 @@ const Sync = (() => {
     await apply('products', await fetchAll('products'), sum);
     await apply('sales', sq.rows, sum);
     await apply('orders', await fetchAll('orders'), sum);
+    await apply('customers', await fetchAll('customers'), sum);
+    await apply('cari', await fetchAll('cari'), sum);
+    await apply('cash_moves', (await query('cash_moves', 'created_at', 'GREATER_THAN_OR_EQUAL', { stringValue: from }, 5000)).rows, sum);
     sum.config = await fetchAll('config');
     const since = sq.readTime || new Date().toISOString();
     const pull = {}; Object.keys(PULL_EVERY).forEach(c => { pull[c] = since; });
@@ -242,7 +254,7 @@ const Sync = (() => {
   }
 
   // Sık değişen tablolar daha sık kontrol edilir (ücretsiz okuma kotası için)
-  const PULL_EVERY = { orders: 8000, sales: 25000, products: 60000, tombstones: 60000, config: 60000 };
+  const PULL_EVERY = { orders: 8000, sales: 30000, cari: 60000, cash_moves: 60000, customers: 120000, products: 120000, tombstones: 120000, config: 120000 };
   const lastPull = {};
   async function pull(force = false) {
     let since = await DB.getMeta('pull_since', null);
@@ -265,7 +277,7 @@ const Sync = (() => {
   const pullListeners = [];
   const onPulled = fn => pullListeners.push(fn);
   const notifyPulled = sum => {
-    if (sum && (sum.full || sum.products || sum.sales || sum.orders || (sum.config && sum.config.length)))
+    if (sum && (sum.full || sum.products || sum.sales || sum.orders || sum.cash_moves || sum.customers || sum.cari || (sum.config && sum.config.length)))
       pullListeners.forEach(fn => { try { fn(sum); } catch (e) { console.error(e); } });
   };
 

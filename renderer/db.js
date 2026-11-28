@@ -1,7 +1,8 @@
 // Yerel veritabanı (IndexedDB) - internet olmadan tüm veriler burada tutulur
 const DB = (() => {
-  const NAME = 'hizli-kasa', VERSION = 3;
+  const NAME = 'hizli-kasa', VERSION = 4;
   let db = null;
+  const STRICT = { durability: 'strict' };
 
   const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
   const done = tx => new Promise((res, rej) => {
@@ -22,6 +23,9 @@ const DB = (() => {
         if (!has('outbox')) d.createObjectStore('outbox', { keyPath: 'seq', autoIncrement: true });
         if (!has('meta')) d.createObjectStore('meta', { keyPath: 'key' });
         if (!has('orders')) d.createObjectStore('orders', { keyPath: 'id' });          // onaya gönderilen siparişler
+        if (!has('cash_moves')) d.createObjectStore('cash_moves', { keyPath: 'id' }).createIndex('created_at', 'created_at', { unique: false });   // kasa açılış / giriş / çıkış / sayım
+        if (!has('customers')) d.createObjectStore('customers', { keyPath: 'id' });                                                              // veresiye müşterileri
+        if (!has('cari')) d.createObjectStore('cari', { keyPath: 'id' }).createIndex('created_at', 'created_at', { unique: false });            // müşteri hesap hareketleri
         if (!has('archives')) d.createObjectStore('archives', { keyPath: 'month' });   // aylık sıkıştırılmış arşivler
       };
       r.onsuccess = () => { db = r.result; res(db); };
@@ -42,7 +46,7 @@ const DB = (() => {
     return vals.map((v, i) => ({ ...v, seq: keys[i] }));
   }
   async function outboxDelete(seqs) {
-    const tx = db.transaction('outbox', 'readwrite');
+    const tx = db.transaction('outbox', 'readwrite', STRICT);
     const st = tx.objectStore('outbox');
     seqs.forEach(s => st.delete(s));
     return done(tx);
@@ -52,13 +56,19 @@ const DB = (() => {
    * Atomik yazma. ops: [{store, value}] kaydedilir, [{store, del: anahtar}] silinir.
    * sync: [{table, row, op?}] buluta gönderilmek üzere kuyruğa eklenir (aynı işlemde). op: 'upsert' | 'delete'
    */
-  async function write(ops = [], sync = []) {
+  async function write(ops = [], sync = [], opt = {}) {
     const stores = new Set(ops.map(o => o.store));
     if (sync.length) stores.add('outbox');
     if (!stores.size) return;
-    const tx = db.transaction([...stores], 'readwrite');
-    ops.forEach(o => (o.del !== undefined ? tx.objectStore(o.store).delete(o.del) : tx.objectStore(o.store).put(o.value)));
     const now = new Date().toISOString();
+    // Önce diskteki yedek deftere (masaüstü): veritabanı bozulsa bile kayıt kaybolmaz
+    if (sync.length && !opt.noJournal && window.kasa && window.kasa.journalAppend) {
+      try { await window.kasa.journalAppend(sync.map(x => ({ at: now, table: x.table, op: x.op || 'upsert', row: x.row }))); }
+      catch (e) { console.error('Yedek deftere yazılamadı', e); }
+    }
+    // strict: işlem bitti denmeden önce veri diske yazılır (elektrik kesintisine karşı)
+    const tx = db.transaction([...stores], 'readwrite', STRICT);
+    ops.forEach(o => (o.del !== undefined ? tx.objectStore(o.store).delete(o.del) : tx.objectStore(o.store).put(o.value)));
     sync.forEach(s => tx.objectStore('outbox').add({ table: s.table, row: s.row, op: s.op || 'upsert', created_at: now }));
     return done(tx);
   }

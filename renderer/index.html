@@ -18,13 +18,16 @@
       <button data-tab="approvals" data-mode="admin">Onaylar <span class="nbadge hidden" id="apprBadge">0</span> <kbd>F6</kbd></button>
       <button data-tab="products" data-mode="admin">Ürünler <kbd>F2</kbd></button>
       <button data-tab="report" data-mode="both">Gün Sonu <kbd>F3</kbd></button>
+      <button data-tab="customers" data-mode="both">Müşteriler</button>
+      <button data-tab="analytics" data-mode="admin">Raporlar</button>
       <button data-tab="settings" data-mode="admin">Ayarlar <kbd>F4</kbd></button>
-      <button data-tab="security" data-mode="admin">Şifre <kbd>F5</kbd></button>
+      <button data-tab="security" data-mode="admin">Kullanıcılar <kbd>F5</kbd></button>
     </nav>
     <span class="grow"></span>
     <button class="update hidden" id="updateBtn"></button>
     <div class="status" id="syncStatus" title="">●</div>
     <div class="clock" id="clock"></div>
+    <button class="hdr-btn cashier hidden" id="btnCashier" title="Kasiyer değiştir"></button>
     <button class="hdr-btn" id="btnHome" title="Ana ekrana dön">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/></svg> Ana ekran</button>
     <button class="hdr-btn exit hidden" id="btnAdminExit" title="Yönetici oturumunu kapat">
@@ -92,7 +95,9 @@
           <span>Kamera</span></button>
       </div>
       <div class="month-banner hidden" id="monthBanner"></div>
+      <div class="month-banner clock hidden" id="clockBanner"></div>
       <div class="order-strip hidden" id="orderStrip"></div>
+      <div class="held-strip hidden" id="heldStrip"></div>
       <div class="browse">
         <nav class="cat-side" id="groupChips"></nav>
         <div class="browse-main">
@@ -102,10 +107,12 @@
       </div>
     </section>
     <aside class="sale-right">
+      <div class="sheet-head"><b>Sepet</b><button type="button" class="ghost" id="sheetClose">Ürünlere dön</button></div>
       <div class="total-box" id="cartAnchor">
         <div class="lbl">TOPLAM</div>
         <div class="total" id="cartTotal">0,00 ₺</div>
         <div class="sub" id="cartCount">0 kalem</div>
+        <div class="disc hidden" id="cartDisc"></div>
       </div>
       <div class="cart-panel">
         <div class="cart-list" id="cartBody"></div>
@@ -114,6 +121,11 @@
       <div class="pay-row">
         <button class="pay cash" id="btnCash">NAKİT <kbd>F8</kbd></button>
         <button class="pay card" id="btnCard">KART / POS <kbd>F9</kbd></button>
+      </div>
+      <div class="tool-row">
+        <button class="tool" id="btnDisc" type="button">İndirim</button>
+        <button class="tool" id="btnCredit" type="button">Veresiye</button>
+        <button class="tool" id="btnHold" type="button">Beklet <kbd>F6</kbd></button>
       </div>
       <button class="send-appr" id="btnSendAppr">ONAYA GÖNDER <kbd>F7</kbd></button>
       <button class="ghost" id="btnClear">Sepeti temizle</button>
@@ -173,12 +185,78 @@
           <tbody id="repSales"></tbody>
         </table></div>
       </div>
+      <div class="rep-side">
+        <div class="panel">
+          <h3>Kasa</h3>
+          <div class="kasa-sum" id="kasaSum"></div>
+          <div class="kasa-btns">
+            <button class="ghost" id="kOpen">Açılış bakiyesi</button>
+            <button class="ghost" id="kIn">Para girişi</button>
+            <button class="ghost" id="kOut">Para çıkışı / masraf</button>
+            <button class="primary" id="kCount">Kasa sayımı</button>
+          </div>
+          <div class="kasa-moves" id="kasaMoves"></div>
+        </div>
+        <div class="panel">
+          <h3>En çok satanlar</h3>
+          <div class="table-wrap"><table class="grid">
+            <thead><tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Tutar</th></tr></thead>
+            <tbody id="repTop"></tbody>
+          </table></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- MÜŞTERİLER (VERESİYE) -->
+  <main id="tab-customers" class="tab">
+    <div class="toolbar">
+      <input id="custSearch" placeholder="Müşteri adı veya telefon ara...">
+      <label class="chk"><input type="checkbox" id="custOnlyDebt"> Sadece borçlular</label>
+      <span class="grow"></span>
+      <span class="hint" id="custTotal"></span>
+      <button id="btnNewCust" class="primary">+ Yeni müşteri</button>
+    </div>
+    <div class="table-wrap panel"><table class="grid">
+      <thead><tr><th>Müşteri</th><th>Telefon</th><th>Son hareket</th><th class="num">Bakiye (borç)</th><th></th></tr></thead>
+      <tbody id="custBody"></tbody>
+    </table></div>
+  </main>
+
+  <!-- RAPORLAR (ÜRÜN / KATEGORİ / KÂR) -->
+  <main id="tab-analytics" class="tab">
+    <div class="toolbar">
+      <label>Başlangıç <input type="date" id="anFrom"></label>
+      <label>Bitiş <input type="date" id="anTo"></label>
+      <button class="ghost" data-range="today">Bugün</button>
+      <button class="ghost" data-range="week">Son 7 gün</button>
+      <button class="ghost" data-range="month">Bu ay</button>
+      <button class="ghost" data-range="last">Geçen ay</button>
+      <span class="grow"></span>
+      <button class="primary" id="anExport">Satışları Excel'e aktar</button>
+    </div>
+    <div class="month-banner info hidden" id="anNote"></div>
+    <div class="cards" id="anCards"></div>
+    <div class="rep-cols">
       <div class="panel">
-        <h3>En çok satanlar</h3>
+        <h3>Ürünler</h3>
         <div class="table-wrap"><table class="grid">
-          <thead><tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Tutar</th></tr></thead>
-          <tbody id="repTop"></tbody>
+          <thead><tr><th>Ürün</th><th class="num">Miktar</th><th class="num">Ciro</th><th class="num">Maliyet</th><th class="num">Kâr</th><th class="num">Marj</th></tr></thead>
+          <tbody id="anProducts"></tbody>
         </table></div>
+      </div>
+      <div class="rep-side">
+        <div class="panel">
+          <h3>Kategoriler</h3>
+          <div class="table-wrap"><table class="grid">
+            <thead><tr><th>Kategori</th><th class="num">Ciro</th><th class="num">Kâr</th><th class="num">Pay</th></tr></thead>
+            <tbody id="anCats"></tbody>
+          </table></div>
+        </div>
+        <div class="panel">
+          <h3>Saatlere göre satış</h3>
+          <div class="hours" id="anHours"></div>
+        </div>
       </div>
     </div>
   </main>
@@ -199,6 +277,14 @@
           <select id="setPaper"><option value="80">80 mm</option><option value="58">58 mm</option></select>
         </label>
         <label class="chk"><input type="checkbox" id="setAutoPrint"> Satış bitince fişi otomatik yazdır</label>
+        <h3 style="margin-top:14px">Terazi barkodu</h3>
+        <p class="hint">Tartılı ürünlerde terazinin bastığı 13 haneli etiket okutulunca ürün ve ağırlık otomatik gelir. Ürünün "Terazi kodu" alanı terazideki PLU koduyla aynı olmalıdır.</p>
+        <label class="chk"><input type="checkbox" id="setScaleOn"> Terazi barkodlarını tanı</label>
+        <div class="two">
+          <label>Ön ekler <input id="setScalePrefix" placeholder="27, 28, 29"></label>
+          <label>Barkoddaki değer
+            <select id="setScaleMode"><option value="weight">Ağırlık (gram)</option><option value="price">Tutar (kuruş)</option></select></label>
+        </div>
         <div class="row-btns">
           <button id="btnSaveSettings" class="primary">Kaydet</button>
           <button id="btnTestPrint" class="ghost">Test fişi yazdır</button>
@@ -241,13 +327,19 @@
         <label>Yeni şifre (tekrar) <input type="password" id="secAdminNew2" autocomplete="new-password"></label>
         <div class="row-btns"><button class="primary" id="btnSecAdmin">Yönetici bilgilerini değiştir</button></div>
       </div>
+      <div class="panel">
+        <h3>Kasiyerler</h3>
+        <p class="hint">Kasiyer tanımlanırsa satış ekranına girerken kasiyer seçilip PIN girilir. Her satışa kasiyerin adı yazılır ve kasiyer yalnızca izin verilen işlemleri yapabilir. Hiç kasiyer yoksa satış ekranı şifresiz açılır.</p>
+        <div id="userList" class="user-list"></div>
+        <div class="row-btns"><button class="primary" id="btnNewUser">+ Kasiyer ekle</button></div>
+      </div>
     </div>
   </main>
 
   <div id="modalBack" class="modal-back hidden"><div id="modal" class="modal"></div></div>
   <div id="toasts" class="toasts"></div>
 
-  <button class="cart-jump" id="cartJump" type="button"><span id="cjCount">Sepet boş</span><b id="cjTotal">0,00 ₺</b></button>
+  <button class="cart-jump" id="cartJump" type="button"><span id="cjCount">Sepet boş</span><span class="cj-r"><b id="cjTotal">0,00 ₺</b><span class="cj-go">Sepet ›</span></span></button>
   <script src="db.js"></script>
   <script src="sync.js"></script>
   <script src="receipt.js"></script>
