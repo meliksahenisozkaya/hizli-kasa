@@ -60,7 +60,7 @@ const Receipt = (() => {
       ${s.cashier && s.cashier.name ? `<div class="small">Kasiyer: ${esc(s.cashier.name)}</div>` : ''}
       ${s.status === 'cancelled' ? '<div class="c b">*** İPTAL EDİLDİ ***</div>' : ''}
       ${s.order_no ? `<div class="small">Onaylı sipariş #${s.order_no}${s.order_note ? ' · ' + esc(s.order_note) : ''}</div>` : ''}
-      ${s.customer_name ? `<div class="small">Müşteri: ${esc(s.customer_name)}</div>` : ''}
+      ${s.customer_name ? `<div class="small">Müşteri: ${esc(s.customer_name)}${s.customer_phone ? ' · Tel: ' + esc(s.customer_phone) : ''}</div>` : ''}
       <hr><table>${items}</table><hr>
       ${!refund && Number(s.discount) > 0 ? `<div class="row"><span>Ara toplam</span><span>${tl(s.subtotal)}</span></div>
         <div class="row"><span>Fiş indirimi</span><span>-${tl(s.discount)}</span></div>` : ''}
@@ -105,7 +105,7 @@ const Receipt = (() => {
   function dayReport(r, settings) {
     const tm = iso => new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
     const ok = (r.sales || []).filter(s => s.status === 'completed').slice().sort((a, b) => a.created_at.localeCompare(b.created_at));
-    const lines = list => `<table class="small">${list.map(s => `<tr class="b"><td>${tm(s.created_at)}  #${s.sale_no}${s.customer_name ? ' ' + esc(s.customer_name) : ''}${s.kind === 'refund' && s.ref_sale_no ? ' (fiş #' + s.ref_sale_no + ')' : ''}</td><td class="r">${tl(s.total)}</td></tr>`
+    const lines = list => `<table class="small">${list.map(s => `<tr class="b"><td>${tm(s.created_at)}  #${s.sale_no}${s.customer_name ? ' ' + esc(s.customer_name) : ''}${s.customer_phone ? ' ' + esc(s.customer_phone) : ''}${s.kind === 'refund' && s.ref_sale_no ? ' (fiş #' + s.ref_sale_no + ')' : ''}</td><td class="r">${tl(s.total)}</td></tr>`
       + (s.payment_type === 'mixed' ? `<tr><td colspan="2">&nbsp;&nbsp;Nakit ${tl(s.cash_amount)} · Kart ${tl(s.card_amount)}</td></tr>` : '')
       + (s.items || []).map(i => `<tr><td colspan="2">&nbsp;&nbsp;${esc(i.name)}</td></tr>
         <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;${qtyFmt(i.qty)} ${esc(i.unit || '')} x ${tl(i.price)}</td><td class="r">${tl(i.total)}</td></tr>`).join('')
@@ -173,7 +173,7 @@ const Receipt = (() => {
       const t = new Date(s.created_at);
       const items = s.items.map(i => `${esc(i.name)} × ${qtyFmt(i.qty)}`).join(', ');
       return `<tr class="${s.status !== 'completed' ? 'x' : ''}"><td>${t.toLocaleDateString('tr-TR')}</td><td>${t.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</td>
-        <td>#${s.sale_no}</td><td>${payLabel(s)}${s.customer_name ? ' · ' + esc(s.customer_name) : ''}${s.status !== 'completed' ? ' (iptal)' : ''}</td><td class="it">${items}</td><td class="r">${tl(s.total)}</td></tr>`;
+        <td>#${s.sale_no}</td><td>${payLabel(s)}${s.customer_name ? ' · ' + esc(s.customer_name) : ''}${s.customer_phone ? ' ' + esc(s.customer_phone) : ''}${s.status !== 'completed' ? ' (iptal)' : ''}</td><td class="it">${items}</td><td class="r">${tl(s.total)}</td></tr>`;
     }).join('');
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
       @page { size: A4; margin: 12mm; }

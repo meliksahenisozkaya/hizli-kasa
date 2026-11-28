@@ -18,7 +18,6 @@
       <button data-tab="approvals" data-mode="admin">Onaylar <span class="nbadge hidden" id="apprBadge">0</span> <kbd>F6</kbd></button>
       <button data-tab="products" data-mode="admin">Ürünler <kbd>F2</kbd></button>
       <button data-tab="report" data-mode="both">Gün Sonu <kbd>F3</kbd></button>
-      <button data-tab="customers" data-mode="both">Müşteriler</button>
       <button data-tab="analytics" data-mode="admin">Raporlar</button>
       <button data-tab="settings" data-mode="admin">Ayarlar <kbd>F4</kbd></button>
       <button data-tab="security" data-mode="admin">Kullanıcılar <kbd>F5</kbd></button>
@@ -206,21 +205,6 @@
         </div>
       </div>
     </div>
-  </main>
-
-  <!-- MÜŞTERİLER (VERESİYE) -->
-  <main id="tab-customers" class="tab">
-    <div class="toolbar">
-      <input id="custSearch" placeholder="Müşteri adı veya telefon ara...">
-      <label class="chk"><input type="checkbox" id="custOnlyDebt"> Sadece borçlular</label>
-      <span class="grow"></span>
-      <span class="hint" id="custTotal"></span>
-      <button id="btnNewCust" class="primary">+ Yeni müşteri</button>
-    </div>
-    <div class="table-wrap panel"><table class="grid">
-      <thead><tr><th>Müşteri</th><th>Telefon</th><th>Son hareket</th><th class="num">Bakiye (borç)</th><th></th></tr></thead>
-      <tbody id="custBody"></tbody>
-    </table></div>
   </main>
 
   <!-- RAPORLAR (ÜRÜN / KATEGORİ / KÂR) -->

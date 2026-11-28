@@ -242,7 +242,6 @@
     if (t === 'report') renderReport();
     if (t === 'settings') renderSettings();
     if (t === 'security') { getAuth().then(a => { $('#secAdminName').value = a.adminUser; }); renderUsers(); }
-    if (t === 'customers') renderCustomers();
     if (t === 'analytics') renderAnalytics();
     if (t === 'sale') renderHeld();
   }
@@ -684,14 +683,8 @@
         card_amount: type === 'card' ? total : type === 'mixed' ? r2(total - extra.cash) : 0,
         status: 'completed', cancelled_at: null, device: deviceId, cashier: actor()
       };
-      let cariRow = null;
-      if (type === 'credit') {
-        const c = extra.customer;
-        sale.customer_id = c.id; sale.customer_name = c.name;
-        sale.balance_after = r2((await balanceOf(c.id)) + total);
-        cariRow = { id: uuid(), customer_id: c.id, customer_name: c.name, created_at: ts, updated_at: ts, type: 'sale', amount: total,
-          sale_id: sale.id, sale_no: no, note: '', cashier: actor(), device: deviceId };
-      }
+      const cariRow = null;
+      if (type === 'credit') { sale.customer_name = extra.customer.name; sale.customer_phone = extra.customer.phone || ''; }
       const ord = activeOrder ? await DB.get('orders', activeOrder) : null;
       if (ord) { sale.order_no = ord.no; sale.order_note = ord.note || ''; }
       const ops = [{ store: 'sales', value: sale }, { store: 'meta', value: { key: 'sale_no', value: no } }];
@@ -723,7 +716,7 @@
   function renderLastSale() {
     const s = lastSale;
     if (!s) { $('#lastSale').innerHTML = ''; return; }
-    $('#lastSale').innerHTML = `Son ${s.kind === 'refund' ? 'iade' : 'satış'} <b>#${s.sale_no}</b> · ${esc(payLabel(s))}${s.customer_name ? ' · ' + esc(s.customer_name) : ''} · <b>${money(s.total)}</b>
+    $('#lastSale').innerHTML = `Son ${s.kind === 'refund' ? 'iade' : 'satış'} <b>#${s.sale_no}</b> · ${esc(payLabel(s))}${s.customer_name ? ' · ' + esc(s.customer_name) : ''}${s.customer_phone ? ' · ' + esc(s.customer_phone) : ''} · <b>${money(s.total)}</b>
       ${s.payment_type === 'cash' && s.change_amount > 0 ? `<div>Para üstü</div><div class="change">${money(s.change_amount)}</div>` : ''}
       <div style="margin-top:8px"><button class="ghost" id="reprint">Fişi yazdır</button></div>`;
     $('#reprint').onclick = () => printSale(s);
@@ -1539,6 +1532,10 @@
     const start = new Date(y, m - 1, d, 0, 0, 0, 0), end = new Date(y, m - 1, d, 23, 59, 59, 999);
     const sIso = start.toISOString(), eIso = end.toISOString();
     const sales = (await DB.range('sales', 'created_at', sIso, eIso)).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    if (sales.some(s => s.customer_id && !s.customer_phone)) {
+      const cm = new Map((await DB.all('customers')).map(c => [c.id, c.phone || '']));
+      sales.forEach(s => { if (s.customer_id && !s.customer_phone) s.customer_phone = cm.get(s.customer_id) || ''; });
+    }
     const ok = sales.filter(s => s.status === 'completed');
     const real = ok.filter(s => s.kind !== 'refund'), refunds = ok.filter(s => s.kind === 'refund');
     const sum = arr => r2(arr.reduce((a, s) => a + s.total, 0));
@@ -1598,7 +1595,7 @@
     ].map(([l, v, c]) => `<div class="card-s ${c || ''}"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
     const row = s => `<tr class="click ${s.status !== 'completed' ? 'cancel' : ''}" data-id="${s.id}">
       <td>${new Date(s.created_at).toLocaleTimeString('tr-TR')}</td><td>#${s.sale_no}</td><td class="num">${s.items.length}</td>
-      <td>${esc(payLabel(s))}${s.customer_name ? ' · ' + esc(s.customer_name) : ''}${s.cashier && s.cashier.name && r.byCashier.length > 1 ? ` <small>(${esc(s.cashier.name)})</small>` : ''}${s.status !== 'completed' ? ' (iptal)' : ''}</td><td class="num">${money(s.total)}</td></tr>`;
+      <td>${esc(payLabel(s))}${s.customer_name ? ' · ' + esc(s.customer_name) : ''}${s.customer_phone ? ` <span class="phone">${esc(s.customer_phone)}</span>` : ''}${s.cashier && s.cashier.name && r.byCashier.length > 1 ? ` <small>(${esc(s.cashier.name)})</small>` : ''}${s.status !== 'completed' ? ' (iptal)' : ''}</td><td class="num">${money(s.total)}</td></tr>`;
     const section = (label, list, always) => {
       if (!list.length && !always) return '';
       const okList = list.filter(s => s.status === 'completed');
@@ -1644,7 +1641,7 @@
     const canCancel = s.status === 'completed' && can('cancel');
     openModal(`<h2>${s.kind === 'refund' ? 'İade' : 'Satış'} #${s.sale_no} ${s.status !== 'completed' ? '(İPTAL)' : ''}</h2>
       <div class="hint">${new Date(s.created_at).toLocaleString('tr-TR')} · ${esc(payLabel(s))}${s.payment_type === 'mixed' ? ` (Nakit ${money(p.cash)} · Kart ${money(p.card)})` : ''}
-        ${s.customer_name ? ' · Müşteri: ' + esc(s.customer_name) : ''}${s.cashier && s.cashier.name ? ' · ' + esc(s.cashier.name) : ''}
+        ${s.customer_name ? ' · Müşteri: ' + esc(s.customer_name) : ''}${s.customer_phone ? ' · Tel: ' + esc(s.customer_phone) : ''}${s.cashier && s.cashier.name ? ' · ' + esc(s.cashier.name) : ''}
         ${s.kind === 'refund' && s.ref_sale_no ? ' · Satış fişi #' + s.ref_sale_no : ''}${s.note ? ' · ' + esc(s.note) : ''}</div>
       <table class="grid items"><tbody>${s.items.map(i => `<tr><td>${esc(i.name)}</td><td class="num">${qtyFmt(i.qty)} x ${money(i.price)}${i.list_price != null && i.list_price > i.price ? ` <s>${money(i.list_price)}</s>` : ''}</td><td class="num">${money(i.total)}</td></tr>`).join('')}
         ${Number(s.discount) > 0 ? `<tr><td colspan="2">Fiş indirimi</td><td class="num">−${money(s.discount)}</td></tr>` : ''}</tbody></table>
@@ -1851,141 +1848,32 @@
   const CARI_LABEL = e => e.type === 'sale' ? `Satış #${e.sale_no}` : e.type === 'refund' ? `İade #${e.sale_no}` : e.type === 'cancel' ? `İptal #${e.sale_no}`
     : `Tahsilat (${e.method === 'card' ? 'kart' : 'nakit'})`;
 
-  function customerForm(c, after) {
-    const isNew = !c;
-    openModal(`<h2>${isNew ? 'Yeni müşteri' : 'Müşteriyi düzenle'}</h2>
-      <label>Ad / firma<input id="cuN" value="${esc(c ? c.name : '')}" autofocus></label>
-      <label>Telefon<input id="cuP" inputmode="tel" value="${esc(c ? c.phone || '' : '')}"></label>
-      <label>Not<input id="cuNote" value="${esc(c ? c.note || '' : '')}" placeholder="ör. adres, vergi no"></label>
-      <div class="btns"><button class="ghost" id="cuC">Vazgeç</button><button class="primary" id="cuO">Kaydet</button></div>`, m => {
-      m.querySelector('#cuC').onclick = closeModal;
-      const ok = async () => {
-        const name = m.querySelector('#cuN').value.trim();
-        if (!name) return toast('Müşteri adı gerekli', 'err');
-        const ts = nowIso();
-        const row = { ...(c || {}), id: c ? c.id : uuid(), name, phone: m.querySelector('#cuP').value.trim(), note: m.querySelector('#cuNote').value.trim(),
-          created_at: c ? c.created_at : ts, updated_at: ts, active: true };
-        await DB.write([{ store: 'customers', value: row }], [{ table: 'customers', row }]);
-        Sync.run(); closeModal(); toast('Müşteri kaydedildi', 'ok');
-        if (after) after(row); else if (currentTab === 'customers') renderCustomers();
-      };
-      m.querySelectorAll('input').forEach(i => i.onkeydown = e => { if (e.key === 'Enter') ok(); });
-      m.querySelector('#cuO').onclick = ok;
-    });
-  }
-
-  async function pickCustomer(cb) {
-    const list = (await DB.all('customers')).filter(c => c.active !== false).sort((a, b) => a.name.localeCompare(b.name, 'tr'));
-    const bal = await balances();
-    openModal(`<h2>Müşteri seçin</h2>
-      <input id="pcS" placeholder="Ad veya telefon ara..." autofocus>
-      <div class="pick" id="pcL"></div>
-      <div class="btns"><button class="ghost" id="pcN">+ Yeni müşteri</button><span class="grow"></span><button class="ghost" id="pcC">Vazgeç</button></div>`, m => {
-      const draw = () => {
-        const q = lower(m.querySelector('#pcS').value);
-        const f = list.filter(c => !q || lower(c.name).includes(q) || (c.phone || '').includes(q)).slice(0, 60);
-        m.querySelector('#pcL').innerHTML = f.map(c => `<button data-c="${c.id}"><span>${esc(c.name)}${c.phone ? ` <small>${esc(c.phone)}</small>` : ''}</span><span>${money(bal.get(c.id) || 0)}</span></button>`).join('')
-          || '<div class="hint">Müşteri bulunamadı. Yeni müşteri ekleyin.</div>';
-        m.querySelectorAll('[data-c]').forEach(b => b.onclick = () => { const c = list.find(x => x.id === b.dataset.c); closeModal(); cb(c); });
-      };
-      m.querySelector('#pcS').oninput = draw; draw();
-      m.querySelector('#pcS').onkeydown = e => { if (e.key === 'Enter') { const b = m.querySelector('[data-c]'); if (b) b.click(); } };
-      m.querySelector('#pcN').onclick = () => customerForm(null, c => cb(c));
-      m.querySelector('#pcC').onclick = closeModal;
-    });
-  }
-
-  function payCredit() {
+  // Veresiye: yalnızca müşteri adı (zorunlu) ve telefon (isteğe bağlı) alınır
+  async function payCredit() {
     if (lockGuard()) return;
     if (!cart.length) return toast('Sepet boş', 'warn');
     if (!need('credit')) return;
-    pickCustomer(async c => {
-      const bal = await balanceOf(c.id), total = cartTotal();
-      openModal(`<h2>Veresiye satış</h2>
-        <div class="kasa-sum">
-          <div class="kl"><span>Müşteri</span><b>${esc(c.name)}</b></div>
-          <div class="kl"><span>Mevcut borç</span><b>${money(bal)}</b></div>
-          <div class="kl"><span>Bu satış</span><b>${money(total)}</b></div>
-          <div class="kl strong"><span>Yeni borç</span><b>${money(bal + total)}</b></div></div>
-        <div class="hint">Satış müşterinin hesabına borç olarak yazılır; ödeme alındığında Müşteriler ekranından tahsilat girilir.</div>
-        <div class="btns"><button class="ghost" id="vcC">Vazgeç</button><button class="primary confirm" id="vcO">Veresiye olarak kaydet</button></div>`, m => {
-        m.querySelector('#vcC').onclick = closeModal;
-        m.querySelector('#vcO').onclick = async () => { closeModal(); await completeSale('credit', null, null, { customer: c }); };
-      });
-    });
-  }
-
-  async function renderCustomers() {
-    const list = (await DB.all('customers')).filter(c => c.active !== false);
-    const bal = await balances();
-    const last = new Map();
-    (await DB.all('cari')).forEach(e => { if (!last.has(e.customer_id) || e.created_at > last.get(e.customer_id)) last.set(e.customer_id, e.created_at); });
-    const q = lower($('#custSearch').value), onlyDebt = $('#custOnlyDebt').checked;
-    const shown = list.filter(c => (!q || lower(c.name).includes(q) || (c.phone || '').includes(q)) && (!onlyDebt || (bal.get(c.id) || 0) > 0.004))
-      .sort((a, b) => (bal.get(b.id) || 0) - (bal.get(a.id) || 0) || a.name.localeCompare(b.name, 'tr'));
-    const totalDebt = r2([...bal.values()].filter(v => v > 0).reduce((a, v) => a + v, 0));
-    $('#custTotal').textContent = `${list.length} müşteri · Toplam alacak ${money(totalDebt)}`;
-    $('#custBody').innerHTML = shown.map(c => `<tr class="click" data-c="${c.id}"><td><b>${esc(c.name)}</b>${c.note ? `<div class="hint">${esc(c.note)}</div>` : ''}</td>
-      <td>${esc(c.phone || '')}</td><td>${last.has(c.id) ? new Date(last.get(c.id)).toLocaleDateString('tr-TR') : '—'}</td>
-      <td class="num ${(bal.get(c.id) || 0) > 0.004 ? 'debt' : ''}">${money(bal.get(c.id) || 0)}</td>
-      <td class="num"><button class="ghost" data-col="${c.id}">Tahsilat</button></td></tr>`).join('')
-      || '<tr><td colspan="5" style="color:var(--muted)">Müşteri yok. Veresiye satışta veya "+ Yeni müşteri" ile eklenir.</td></tr>';
-    $('#custBody').querySelectorAll('tr[data-c]').forEach(tr => tr.onclick = e => {
-      const c = list.find(x => x.id === tr.dataset.c);
-      if (e.target.dataset.col) return collectForm(c);
-      customerDetail(c);
-    });
-  }
-  $('#custSearch').addEventListener('input', () => renderCustomers());
-  $('#custOnlyDebt').addEventListener('change', () => renderCustomers());
-  $('#btnNewCust').onclick = () => customerForm(null);
-
-  async function customerDetail(c) {
-    const entries = (await DB.all('cari')).filter(e => e.customer_id === c.id).sort((a, b) => a.created_at.localeCompare(b.created_at));
-    let run = 0;
-    const rows = entries.map(e => { run = r2(run + e.amount); return { ...e, label: CARI_LABEL(e), run }; });
-    openModal(`<h2>${esc(c.name)}</h2><div class="hint">${esc([c.phone, c.note].filter(Boolean).join(' · '))}</div>
-      <div class="preview"><table class="grid"><thead><tr><th>Tarih</th><th>İşlem</th><th class="num">Borç</th><th class="num">Alacak</th><th class="num">Bakiye</th></tr></thead><tbody>
-        ${rows.slice().reverse().map(r => `<tr><td>${new Date(r.created_at).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' })}</td><td>${esc(r.label)}${r.note ? ' · ' + esc(r.note) : ''}</td>
-          <td class="num">${r.amount > 0 ? money(r.amount) : ''}</td><td class="num">${r.amount < 0 ? money(-r.amount) : ''}</td><td class="num">${money(r.run)}</td></tr>`).join('')
-          || '<tr><td colspan="5" style="color:var(--muted)">Hareket yok</td></tr>'}</tbody></table></div>
-      <div class="big-total">Bakiye: ${money(run)}</div>
-      <div class="btns"><button class="ghost" id="cdE">Düzenle</button><button class="ghost" id="cdP">Ekstre yazdır</button><span class="grow"></span>
-        <button class="primary" id="cdT">Tahsilat al</button><button class="ghost" id="cdC">Kapat</button></div>`, m => {
-      m.classList.add('wide'); modalClose = () => m.classList.remove('wide');
-      m.querySelector('#cdC').onclick = closeModal;
-      m.querySelector('#cdE').onclick = () => customerForm(c);
-      m.querySelector('#cdP').onclick = () => printHtml(Receipt.statement(c, rows, run, settings));
-      m.querySelector('#cdT').onclick = () => collectForm(c);
-    });
-  }
-
-  async function collectForm(c) {
-    if (!need('credit')) return;
-    const bal = await balanceOf(c.id);
-    let method = 'cash';
-    openModal(`<h2>Tahsilat · ${esc(c.name)}</h2><div>Mevcut borç <b>${money(bal)}</b></div>
-      <label>Alınan tutar<input id="tcA" inputmode="decimal" autofocus value="${bal > 0 ? String(bal).replace('.', ',') : ''}"></label>
-      <div class="seg"><button type="button" data-m="cash" class="on">Nakit</button><button type="button" data-m="card">Kart</button></div>
-      <label>Not (isteğe bağlı)<input id="tcN"></label>
-      <div class="btns"><button class="ghost" id="tcC">Vazgeç</button><button class="primary confirm" id="tcO">✓ Ödemeyi aldım</button></div>`, m => {
-      m.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { method = b.dataset.m; m.querySelectorAll('[data-m]').forEach(x => x.classList.toggle('on', x === b)); });
-      m.querySelector('#tcC').onclick = closeModal;
+    const known = new Map();
+    (await DB.all('sales')).filter(x => x.customer_name).sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .forEach(x => known.set(x.customer_name, x.customer_phone || known.get(x.customer_name) || ''));
+    const total = cartTotal();
+    openModal(`<h2>Veresiye satış</h2><div class="big-total">${money(total)}</div>
+      <label>Müşteri adı<input id="vcN" list="vcList" autocomplete="off" autofocus placeholder="ör. Mehmet Koç"></label>
+      <datalist id="vcList">${[...known.keys()].map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <label>Telefon (isteğe bağlı)<input id="vcP" inputmode="tel" autocomplete="off" placeholder="05xx xxx xx xx"></label>
+      <div class="btns"><button class="ghost" id="vcC">Vazgeç</button><button class="primary confirm" id="vcO">Veresiye olarak kaydet</button></div>`, m => {
+      const n = m.querySelector('#vcN'), ph = m.querySelector('#vcP');
+      n.oninput = () => { const k = known.get(n.value.trim()); if (k && !ph.value) ph.value = k; };
       const ok = async () => {
-        const v = r2(parseNum(m.querySelector('#tcA').value));
-        if (!(v > 0)) return toast('Geçerli bir tutar girin', 'err');
-        const ts = nowIso();
-        const e = { id: uuid(), customer_id: c.id, customer_name: c.name, created_at: ts, updated_at: ts, type: 'collect', amount: -v, method,
-          note: m.querySelector('#tcN').value.trim(), cashier: actor(), device: deviceId, balance_after: r2(bal - v) };
-        await DB.write([{ store: 'cari', value: e }], [{ table: 'cari', row: e }]);
-        Sync.run(); closeModal();
-        toast(`${c.name}: ${money(v)} tahsil edildi · kalan ${money(bal - v)}`, 'ok');
-        if (settings.autoPrint) printHtml(Receipt.collect(e, settings));
-        if (currentTab === 'customers') renderCustomers();
-        if (currentTab === 'report') renderReport();
+        const name = n.value.trim().replace(/\s+/g, ' ');
+        if (!name) { beep(false); return toast('Müşteri adını yazın', 'err'); }
+        closeModal();
+        await completeSale('credit', null, null, { customer: { name, phone: ph.value.trim() } });
       };
-      m.querySelector('#tcA').onkeydown = e => { if (e.key === 'Enter') ok(); };
-      m.querySelector('#tcO').onclick = ok;
+      n.onkeydown = e => { if (e.key === 'Enter') ph.focus(); };
+      ph.onkeydown = e => { if (e.key === 'Enter') ok(); };
+      m.querySelector('#vcO').onclick = ok;
+      m.querySelector('#vcC').onclick = closeModal;
     });
   }
 
@@ -2007,7 +1895,7 @@
           <td class="num">${r.left > 0 ? `<input class="rq" data-i="${r.idx}" inputmode="decimal" value="0">` : '—'}</td></tr>`).join('')}</tbody></table>
       <div class="btns" style="margin-top:0"><button class="ghost" id="rfAll">Tümünü iade et</button></div>
       ${methods.length > 1 ? `<div class="seg">${methods.map(x => `<button type="button" data-m="${x}" class="${x === method ? 'on' : ''}">${x === 'cash' ? 'Nakit iade' : 'Karta iade'}</button>`).join('')}</div>`
-        : `<div class="hint">Veresiye satış: iade tutarı ${esc(s.customer_name || '')} hesabından düşülür.</div>`}
+        : `<div class="hint">Veresiye satış (${esc(s.customer_name || '')}): iade, veresiye iadesi olarak kaydedilir.</div>`}
       <label>Açıklama (isteğe bağlı)<input id="rfNote" placeholder="ör. ürün bozuk çıktı"></label>
       <div class="big-total" id="rfTot">0,00 ₺</div>
       <div class="btns"><button class="ghost" id="rfC">Vazgeç</button><button class="primary confirm" id="rfO">İadeyi kaydet</button></div>`, m => {
@@ -2039,8 +1927,8 @@
           customer_id: s.customer_id || null, customer_name: s.customer_name || null
         };
         const ops = [{ store: 'sales', value: ref }, { store: 'meta', value: { key: 'sale_no', value: no } }], sync = [{ table: 'sales', row: ref }];
+        ref.customer_phone = s.customer_phone || '';
         if (method === 'credit' && s.customer_id) {
-          ref.balance_after = r2((await balanceOf(s.customer_id)) - T);
           const e = { id: uuid(), customer_id: s.customer_id, customer_name: s.customer_name, created_at: ts, updated_at: ts, type: 'refund', amount: -T,
             sale_id: ref.id, sale_no: no, note: ref.note, cashier: actor(), device: deviceId };
           ops.push({ store: 'cari', value: e }); sync.push({ table: 'cari', row: e });
@@ -2217,7 +2105,7 @@
   $('#anExport').onclick = async () => {
     const sales = await rangeSales();
     if (!sales.length) return toast('Bu aralıkta satış yok', 'warn');
-    const head = ['Tarih', 'Saat', 'Fiş No', 'Tür', 'Durum', 'Ödeme', 'Nakit', 'Kart', 'Veresiye', 'Müşteri', 'Kasiyer', 'Ürün', 'Barkod', 'Kategori', 'Miktar', 'Birim',
+    const head = ['Tarih', 'Saat', 'Fiş No', 'Tür', 'Durum', 'Ödeme', 'Nakit', 'Kart', 'Veresiye', 'Müşteri', 'Telefon', 'Kasiyer', 'Ürün', 'Barkod', 'Kategori', 'Miktar', 'Birim',
       'Birim fiyat', 'Liste fiyatı', 'Satır tutarı', 'Fiş indirimi', 'Fiş toplamı', 'KDV %', 'Birim maliyet'];
     const rows = [head];
     sales.forEach(s => {
@@ -2225,7 +2113,7 @@
       s.items.forEach((i, k) => rows.push([
         d.toLocaleDateString('tr-TR'), d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }), s.sale_no, s.kind === 'refund' ? 'İade' : 'Satış',
         s.status === 'completed' ? 'Tamamlandı' : 'İptal', Receipt.PAY_LABEL[s.payment_type] || s.payment_type,
-        k ? '' : p.cash, k ? '' : p.card, k ? '' : p.credit, s.customer_name || '', (s.cashier && s.cashier.name) || '',
+        k ? '' : p.cash, k ? '' : p.card, k ? '' : p.credit, s.customer_name || '', s.customer_phone || '', (s.cashier && s.cashier.name) || '',
         i.name, i.barcode || '', i.category || '', i.qty, i.unit || '', i.price, i.list_price ?? i.price, i.total,
         k ? '' : (Number(s.discount) || 0), k ? '' : s.total, Number(i.vat_rate) || 0, i.cost ?? ''
       ]));
@@ -2233,7 +2121,7 @@
     const name = `satislar-${$('#anFrom').value}_${$('#anTo').value}.xlsx`;
     try {
       if (window.kasa && window.kasa.saveExcel) {
-        const r = await window.kasa.saveExcel(rows, name, { sheet: 'Satışlar', cols: [11, 7, 8, 7, 11, 13, 10, 10, 10, 20, 12, 38, 15, 18, 8, 8, 11, 11, 11, 11, 11, 6, 11] });
+        const r = await window.kasa.saveExcel(rows, name, { sheet: 'Satışlar', cols: [11, 7, 8, 7, 11, 13, 10, 10, 10, 20, 14, 12, 38, 15, 18, 8, 8, 11, 11, 11, 11, 11, 6, 11] });
         if (r && r.saved) toast('Kaydedildi: ' + r.path, 'ok');
       } else {
         const csv = rows.map(r => r.map(v => String(v).replace(/;/g, ',')).join(';')).join('\r\n');
@@ -2357,7 +2245,6 @@
     if (currentTab === 'sale') { renderChips(); renderTiles(); renderOrderStrip(); }
     if (currentTab === 'products' && !modalOpen()) renderProducts();
     if (currentTab === 'report' && (sum.sales || sum.cash_moves || sum.cari)) renderReport();
-    if (currentTab === 'customers' && (sum.customers || sum.cari) && !modalOpen()) renderCustomers();
     if (currentTab === 'analytics' && sum.sales) renderAnalytics();
     if (currentTab === 'approvals' && sum.orders && !document.activeElement.matches('input.pi')) renderApprovals();
   });
