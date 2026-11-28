@@ -74,7 +74,7 @@ ipcMain.handle('excel:read', async (_e, bytes) => {
   return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: false });
 });
 
-ipcMain.handle('excel:save', async (_e, rows, name) => {
+ipcMain.handle('excel:save', async (_e, rows, name, opts = {}) => {
   const XLSX = require('xlsx');
   const r = await dialog.showSaveDialog(win, {
     title: 'Excel dosyasını kaydet',
@@ -83,9 +83,9 @@ ipcMain.handle('excel:save', async (_e, rows, name) => {
   });
   if (r.canceled || !r.filePath) return { saved: false };
   const ws = XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols'] = [{ wch: 10 }, { wch: 40 }, { wch: 16 }, { wch: 7 }, { wch: 18 }, { wch: 14 }, { wch: 8 }, { wch: 18 }, { wch: 18 }, { wch: 38 }];
+  ws['!cols'] = (Array.isArray(opts.cols) ? opts.cols : [10, 40, 16, 7, 18, 14, 8, 18, 18, 38, 14]).map(wch => ({ wch }));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Fiyat Listesi');
+  XLSX.utils.book_append_sheet(wb, ws, String(opts.sheet || 'Fiyat Listesi').slice(0, 31));
   XLSX.writeFile(wb, r.filePath);
   shell.showItemInFolder(r.filePath);
   return { saved: true, path: r.filePath };
@@ -111,6 +111,34 @@ ipcMain.handle('archive:save', async (_e, name, base64) => {
 });
 
 ipcMain.handle('app:version', () => app.getVersion());
+
+// ---- Diske anında yazılan yedek kayıt defteri ----
+// Bulut gönderimi bekleyen her kayıt önce buraya (fsync ile) yazılır. Elektrik kesintisi veya
+// beklenmedik kapanmada yerel veritabanı zarar görse bile kayıtlar buradan geri yüklenir.
+const nodeFs = require('fs');
+const jFile = () => path.join(app.getPath('userData'), 'kasa-journal.jsonl');
+const sFile = () => path.join(app.getPath('userData'), 'kasa-state.json');
+function syncWrite(file, text, flag) {
+  const fd = nodeFs.openSync(file, flag);
+  try { nodeFs.writeSync(fd, text); nodeFs.fsyncSync(fd); } finally { nodeFs.closeSync(fd); }
+}
+function atomicWrite(file, text) { const tmp = file + '.tmp'; syncWrite(tmp, text, 'w'); nodeFs.renameSync(tmp, file); }
+ipcMain.handle('journal:append', (_e, lines) => {
+  if (!Array.isArray(lines) || !lines.length) return true;
+  syncWrite(jFile(), lines.map(l => JSON.stringify(l)).join('\n') + '\n', 'a');
+  return true;
+});
+ipcMain.handle('journal:read', () => { try { return nodeFs.readFileSync(jFile(), 'utf8'); } catch (_) { return ''; } });
+// Buluta ulaşmış kayıtlar defterden çıkarılır (keepFrom tarihinden sonra yazılanlar kalır)
+ipcMain.handle('journal:trim', (_e, keepFrom) => {
+  let txt = '';
+  try { txt = nodeFs.readFileSync(jFile(), 'utf8'); } catch (_) { return true; }
+  const keep = txt.split('\n').filter(l => { if (!l.trim()) return false; try { return JSON.parse(l).at >= keepFrom; } catch (_) { return false; } });
+  atomicWrite(jFile(), keep.length ? keep.join('\n') + '\n' : '');
+  return true;
+});
+ipcMain.handle('state:save', (_e, obj) => { atomicWrite(sFile(), JSON.stringify(obj)); return true; });
+ipcMain.handle('state:read', () => { try { return JSON.parse(nodeFs.readFileSync(sFile(), 'utf8')); } catch (_) { return null; } });
 
 // ---- Otomatik güncelleme (GitHub Releases) ----
 function setupAutoUpdate() {
