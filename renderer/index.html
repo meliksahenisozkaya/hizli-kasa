@@ -18,6 +18,7 @@
       <button data-tab="approvals" data-mode="admin">Onaylar <span class="nbadge hidden" id="apprBadge">0</span> <kbd>F6</kbd></button>
       <button data-tab="products" data-mode="admin">Ürünler <kbd>F2</kbd></button>
       <button data-tab="report" data-mode="both">Gün Sonu <kbd>F3</kbd></button>
+      <button data-tab="credits" data-mode="both">Veresiyeler <kbd>F10</kbd></button>
       <button data-tab="analytics" data-mode="admin">Raporlar</button>
       <button data-tab="settings" data-mode="admin">Ayarlar <kbd>F4</kbd></button>
       <button data-tab="security" data-mode="admin">Kullanıcılar <kbd>F5</kbd></button>
@@ -204,6 +205,21 @@
           </table></div>
         </div>
       </div>
+    </div>
+  </main>
+
+  <!-- VERESİYELER -->
+  <main id="tab-credits" class="tab">
+    <div class="toolbar">
+      <input id="crSearch" class="grow" placeholder="İsim veya telefon ara" autocomplete="off">
+      <label class="chk"><input type="checkbox" id="crAll"> Kapananları da göster</label>
+    </div>
+    <div class="cards" id="crCards"></div>
+    <div class="panel">
+      <div class="table-wrap"><table class="grid">
+        <thead><tr><th>Müşteri</th><th>Telefon</th><th class="num">Satış</th><th>Son işlem</th><th class="num">Veresiye</th><th class="num">Ödenen</th><th class="num">Kalan</th></tr></thead>
+        <tbody id="crList"></tbody>
+      </table></div>
     </div>
   </main>
 

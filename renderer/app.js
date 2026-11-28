@@ -240,6 +240,7 @@
     if (t === 'approvals') renderApprovals();
     if (t === 'products') { renderProducts(); $('#prodSearch').focus(); }
     if (t === 'report') renderReport();
+    if (t === 'credits') { renderCredits(); if (!TOUCH) $('#crSearch').focus(); }
     if (t === 'settings') renderSettings();
     if (t === 'security') { getAuth().then(a => { $('#secAdminName').value = a.adminUser; }); renderUsers(); }
     if (t === 'analytics') renderAnalytics();
@@ -1877,6 +1878,104 @@
     });
   }
 
+
+  // ---------- VERESİYELER ----------
+  const ckey = n => String(n || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase('tr-TR');
+  async function creditAccounts() {
+    const old = new Map((await DB.all('customers').catch(() => [])).map(c => [c.id, c]));
+    const acc = new Map();
+    const get = (name, phone) => {
+      const k = ckey(name);
+      if (!acc.has(k)) acc.set(k, { key: k, name: String(name).trim(), phone: '', sales: [], collects: [], debt: 0, paid: 0, last: '' });
+      const a = acc.get(k); if (phone) a.phone = phone; return a;
+    };
+    const sales = (await DB.all('sales')).filter(s => s.status === 'completed').sort((a, b) => a.created_at.localeCompare(b.created_at));
+    for (const s of sales) {
+      const cr = payOf(s).credit; if (!cr) continue;
+      const oc = s.customer_id ? old.get(s.customer_id) : null;
+      const name = s.customer_name || (oc && oc.name); if (!name) continue;
+      const a = get(name, s.customer_phone || (oc && oc.phone) || '');
+      a.sales.push(s); a.debt = r2(a.debt + cr); if (s.created_at > a.last) a.last = s.created_at;
+    }
+    const cari = (await DB.all('cari')).filter(e => e.type === 'collect').sort((a, b) => a.created_at.localeCompare(b.created_at));
+    for (const e of cari) {
+      const oc = e.customer_id ? old.get(e.customer_id) : null;
+      const name = e.customer_name || (oc && oc.name); if (!name) continue;
+      const a = get(name, '');
+      a.collects.push(e); a.paid = r2(a.paid - e.amount); if (e.created_at > a.last) a.last = e.created_at;
+    }
+    acc.forEach(a => { a.balance = r2(a.debt - a.paid); });
+    return [...acc.values()];
+  }
+  const shortDate = iso => iso ? new Date(iso).toLocaleDateString('tr-TR') : '';
+  async function renderCredits() {
+    const all = await creditAccounts();
+    const q = ckey($('#crSearch').value), showAll = $('#crAll').checked;
+    const list = all.filter(a => (showAll || Math.abs(a.balance) > 0.004) && (!q || ckey(a.name).includes(q) || a.phone.replace(/\D/g, '').includes(q.replace(/\D/g, '') || '\u0000')))
+      .sort((a, b) => b.balance - a.balance || b.last.localeCompare(a.last));
+    const open = all.filter(a => a.balance > 0.004);
+    $('#crCards').innerHTML = [['Toplam alacak', money(r2(open.reduce((x, a) => x + a.balance, 0))), 'main'], ['Borçlu müşteri', open.length], ['Toplam tahsilat', money(r2(all.reduce((x, a) => x + a.paid, 0)))]]
+      .map(([l, v, c]) => `<div class="card-s ${c || ''}"><div class="l">${l}</div><div class="v">${v}</div></div>`).join('');
+    $('#crList').innerHTML = list.length ? list.map(a => `<tr class="clickable" data-k="${esc(a.key)}">
+      <td><b>${esc(a.name)}</b></td><td>${a.phone ? `<span class="phone">${esc(a.phone)}</span>` : '<span class="cr-dim">—</span>'}</td>
+      <td class="num">${a.sales.length}</td><td>${shortDate(a.last)}</td><td class="num">${money(a.debt)}</td><td class="num">${money(a.paid)}</td>
+      <td class="num"><b class="${a.balance > 0.004 ? 'neg' : 'pos'}">${money(a.balance)}</b></td></tr>`).join('')
+      : `<tr><td colspan="7" class="cr-empty">${q ? 'Eşleşen veresiye yok' : 'Açık veresiye yok'}</td></tr>`;
+    $('#crList').querySelectorAll('tr[data-k]').forEach(tr => tr.onclick = () => creditDetail(tr.dataset.k));
+  }
+  $('#crSearch').oninput = () => renderCredits();
+  $('#crAll').onchange = () => renderCredits();
+
+  async function creditDetail(k) {
+    const a = (await creditAccounts()).find(x => x.key === k); if (!a) return;
+    const rows = [...a.sales.map(s => ({ created_at: s.created_at, label: s.kind === 'refund' ? `İade #${s.sale_no}` : `Satış #${s.sale_no}`, amount: payOf(s).credit, sale: s })),
+      ...a.collects.map(e => ({ created_at: e.created_at, label: `Tahsilat (${e.method === 'card' ? 'kart' : 'nakit'})${e.note ? ' · ' + e.note : ''}`, amount: e.amount, col: e }))]
+      .sort((x, y) => x.created_at.localeCompare(y.created_at));
+    openModal(`<h2>${esc(a.name)}</h2>
+      <div class="hint">${a.phone ? 'Tel: ' + esc(a.phone) + ' · ' : ''}Veresiye ${money(a.debt)} · Ödenen ${money(a.paid)}</div>
+      <div class="big-total">${money(a.balance)}</div>
+      <div class="table-wrap cr-rows"><table class="grid"><thead><tr><th>Tarih</th><th>İşlem</th><th class="num">Tutar</th></tr></thead><tbody>
+      ${rows.map((r, i) => `<tr ${r.sale ? `class="clickable" data-i="${i}"` : ''}><td>${new Date(r.created_at).toLocaleString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</td><td>${esc(r.label)}</td><td class="num ${r.amount < 0 ? 'pos' : ''}">${r.amount < 0 ? '−' : ''}${money(Math.abs(r.amount))}</td></tr>`).join('')}
+      </tbody></table></div>
+      <div class="btns"><button class="ghost" id="cdC">Kapat</button><button class="ghost" id="cdP">Ekstre yazdır</button>${a.balance > 0.004 ? '<button class="primary" id="cdT">Tahsilat al</button>' : ''}</div>`, m => {
+      m.querySelectorAll('tr[data-i]').forEach(tr => tr.onclick = () => { const s = rows[+tr.dataset.i].sale; closeModal(); saleDetail(s); });
+      m.querySelector('#cdC').onclick = closeModal;
+      m.querySelector('#cdP').onclick = () => printHtml(Receipt.statement({ name: a.name + (a.phone ? ' · ' + a.phone : '') }, rows, a.balance, settings));
+      const t = m.querySelector('#cdT'); if (t) t.onclick = () => collectCredit(a);
+    });
+  }
+
+  function collectCredit(a) {
+    if (!need('credit')) return;
+    let method = 'cash';
+    openModal(`<h2>Tahsilat · ${esc(a.name)}</h2><div class="hint">Kalan borç: <b>${money(a.balance)}</b></div>
+      <label>Alınan tutar<input id="tcA" inputmode="decimal" autocomplete="off" value="${String(a.balance).replace('.', ',')}"></label>
+      <div class="seg" id="tcM"><button type="button" class="on" data-m="cash">Nakit</button><button type="button" data-m="card">Kart</button></div>
+      <label>Not (isteğe bağlı)<input id="tcN" autocomplete="off"></label>
+      <div class="btns"><button class="ghost" id="tcC">Vazgeç</button><button class="primary confirm" id="tcO">Tahsil et</button></div>`, m => {
+      const inp = m.querySelector('#tcA'); setTimeout(() => { inp.focus(); inp.select(); }, 30);
+      m.querySelectorAll('#tcM button').forEach(b => b.onclick = () => { method = b.dataset.m; m.querySelectorAll('#tcM button').forEach(x => x.classList.toggle('on', x === b)); });
+      const ok = async () => {
+        const amt = r2(parseFloat(inp.value.replace(/\./g, '').replace(',', '.')) || 0);
+        if (amt <= 0) { beep(false); return toast('Tutarı yazın', 'err'); }
+        if (amt > a.balance + 0.004) { beep(false); return toast('Tutar kalan borçtan fazla', 'err'); }
+        const ts = nowIso();
+        const e = { id: uuid(), customer_id: null, customer_name: a.name, customer_phone: a.phone || '', created_at: ts, updated_at: ts, type: 'collect',
+          amount: -amt, method, note: m.querySelector('#tcN').value.trim(), balance_after: r2(a.balance - amt), cashier: actor(), device: deviceId };
+        try {
+          await DB.write([{ store: 'cari', value: e }], [{ table: 'cari', row: e }]);
+          closeModal(); Sync.run();
+          toast(`${a.name}: ${money(amt)} tahsil edildi`, 'ok');
+          printHtml(Receipt.collect(e, settings));
+          renderCredits(); if (currentTab === 'report') renderReport();
+        } catch (er) { toast('Kaydedilemedi: ' + er.message, 'err'); }
+      };
+      inp.onkeydown = ev => { if (ev.key === 'Enter') ok(); };
+      m.querySelector('#tcO').onclick = ok;
+      m.querySelector('#tcC').onclick = closeModal;
+    });
+  }
+
   // ---------- İADE ----------
   async function openRefund(s) {
     if (!need('refund')) return;
@@ -2245,6 +2344,7 @@
     if (currentTab === 'sale') { renderChips(); renderTiles(); renderOrderStrip(); }
     if (currentTab === 'products' && !modalOpen()) renderProducts();
     if (currentTab === 'report' && (sum.sales || sum.cash_moves || sum.cari)) renderReport();
+    if (currentTab === 'credits' && (sum.sales || sum.cari)) renderCredits();
     if (currentTab === 'analytics' && sum.sales) renderAnalytics();
     if (currentTab === 'approvals' && sum.orders && !document.activeElement.matches('input.pi')) renderApprovals();
   });
@@ -2388,7 +2488,7 @@
       return;
     }
     if (currentTab === 'login') return;
-    const keys = mode === 'admin' ? { F2: 'products', F3: 'report', F4: 'settings', F5: 'security', F6: 'approvals' } : { F1: 'sale', F3: 'report' };
+    const keys = mode === 'admin' ? { F2: 'products', F3: 'report', F4: 'settings', F5: 'security', F6: 'approvals', F10: 'credits' } : { F1: 'sale', F3: 'report', F10: 'credits' };
     if (keys[e.key]) { e.preventDefault(); showTab(keys[e.key]); return; }
     if (currentTab === 'sale') {
       if (e.key === 'F8') { e.preventDefault(); payCash(); }
