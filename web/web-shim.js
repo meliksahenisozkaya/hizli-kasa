@@ -30,12 +30,12 @@
       const ws = wb.Sheets[wb.SheetNames[0]];
       return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null, blankrows: false });
     },
-    saveExcel: async (rows, name) => {
+    saveExcel: async (rows, name, opts = {}) => {
       if (!window.XLSX) throw new Error('Excel yazıcı yüklenemedi');
       const ws = XLSX.utils.aoa_to_sheet(rows);
-      ws['!cols'] = [10, 40, 16, 7, 18, 14, 8, 18, 18, 38].map(wch => ({ wch }));
+      ws['!cols'] = (opts.cols || [10, 40, 16, 7, 18, 14, 8, 18, 18, 38, 14]).map(wch => ({ wch }));
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Fiyat Listesi');
+      XLSX.utils.book_append_sheet(wb, ws, String(opts.sheet || 'Fiyat Listesi').slice(0, 31));
       XLSX.writeFile(wb, name || 'urunler.xlsx');
       return { saved: true, path: 'İndirilenler / ' + (name || 'urunler.xlsx') };
     },
